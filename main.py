@@ -27,7 +27,3 @@ def send_message(chat_id: int, text: str):
         "text": text
     }
     requests.post(url, json=payload)
-
-# Для локального тестирования (не для Vercel)
-if __name__ == '__main__':
-    app.run(port=5000)
