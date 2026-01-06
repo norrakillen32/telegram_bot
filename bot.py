@@ -18,9 +18,12 @@ logger = logging.getLogger(__name__)
 # Инициализация NLP‑ядра
 nlp = NLPEngine()
 
-# ID администратора (ваш Telegram ID, чтобы защитить /learn)
-ADMIN_ID = 7918581679  # Замените на свой ID
+# ID администратора (ваш Telegram ID)
+ADMIN_ID = 123456789  # Замените на свой ID
 
+# Создаём приложение ГЛОБАЛЬНО (чтобы можно было импортировать)
+TOKEN = "8572890476:AAHVRIrKb_8JuZI_gvjWputPWKNE78AxNvU"  # Укажите токен здесь
+application = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Приветственное сообщение с клавиатурой."""
@@ -60,19 +63,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = nlp.find_best_answer(query)
     await update.message.reply_text(answer, parse_mode="Markdown")
 
+# Добавляем обработчики (глобально)
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("learn", learn))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Функция для локального запуска (опционально)
 def main():
-    # Укажите токен бота от @BotFather
-    TOKEN = "8572890476:AAHVRIrKb_8JuZI_gvjWputPWKNE78AxNvU"
-
-
-    # Создаём приложение
-    application = Application.builder().token(TOKEN).build()
-
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("learn", learn))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
