@@ -1,7 +1,7 @@
 import os
 import requests
 from typing import Dict, Any
-from nlp_engine import search_answer, add_new_knowledge, process_feedback
+from nlp_engine_simple import search_answer
 
 class TelegramAPI:
     """Работа с Telegram Bot API"""
