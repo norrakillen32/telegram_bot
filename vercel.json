@@ -1,38 +1,21 @@
+
 {
   "version": 2,
   "builds": [
     {
       "src": "main.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "500mb",
-        "runtime": "python3.11"
-      }
+      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/ask",
-      "dest": "/api/main"
-    },
-    {
-      "src": "/learn",
-      "dest": "/api/main"
-    },
-    {
-      "src": "/",
-      "dest": "/api/main"
+      "src": "/webhook",
+      "dest": "/main.py"
     },
     {
       "src": "/(.*)",
       "status": 404
     }
-  ],
-  "functions": {
-    "api/*": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
-  }
+  ]
 }
 
