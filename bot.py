@@ -31,7 +31,6 @@ if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
 
-application = Application.builder().token(TOKEN).build()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,3 +74,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("learn", learn))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application = Application.builder().token(TOKEN).build()
