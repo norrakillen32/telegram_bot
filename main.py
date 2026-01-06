@@ -48,4 +48,3 @@ def webhook():
 def health():
     logger.info("Получен GET-запрос на / (health check)")
     return jsonify({'status': 'ok', 'service': 'Telegram 1C Bot'})
-
