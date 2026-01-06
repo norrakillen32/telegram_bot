@@ -10,7 +10,9 @@ def webhook():
     print("Получено обновление:", update)  # Логируем в консоль/файл
 
     if 'message' in update and 'text' in update['message']:
-        # ... логика отправки ответа
+        chat_id = update['message']['chat']['id']
+        user_text = update['message']['text']
+        send_message(chat_id, f"Вы написали: {user_text}")
     else:
         print("Не текстовое сообщение:", update)  # Логируем неподдерживаемые типы
 
