@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from bot_logic import processor
+from bot_processor import bot_processor
 import logging
 
 app = Flask(__name__)
@@ -19,10 +19,10 @@ def telegram_webhook():
             logger.warning("Пустой запрос от Telegram")
             return jsonify({"status": "error", "message": "Empty data"}), 400
         
-        logger.info(f"Получен вебхук: {update_data}")
+        logger.info(f"Получен вебхук от пользователя {update_data.get('message', {}).get('from', {}).get('id', 'unknown')}")
         
         # Обрабатываем обновление
-        success = processor.process_update(update_data)
+        success = bot_processor.process_update(update_data)
         
         if success:
             return jsonify({"status": "ok"}), 200
@@ -38,9 +38,11 @@ def health_check():
     """Проверка работоспособности сервера"""
     return jsonify({
         "status": "ok",
-        "service": "Telegram 1C Bot",
-        "endpoints": {
+        "service": "Telegram 1C Bot with NLP",
+        "modules": {
             "webhook": "POST /webhook",
-            "health": "GET /"
+            "health": "GET /",
+            "nlp_engine": "active",
+            "bot_processor": "active"
         }
     })
