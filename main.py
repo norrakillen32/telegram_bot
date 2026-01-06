@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
+    
 app = Flask(__name__)
 
 # 1. СОЗДАЕМ И ИНИЦИАЛИЗИРУЕМ ПРИЛОЖЕНИЕ ТЕЛЕГРАМ-БОТА ОДИН РАЗ
