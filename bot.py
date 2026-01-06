@@ -22,17 +22,15 @@ nlp = NLPEngine()
 ADMIN_ID = 123456789  # Замените на свой ID
 
 # Создаём приложение ГЛОБАЛЬНО (чтобы можно было импортировать)
-TOKEN = "8572890476:AAHVRIrKb_8JuZI_gvjWputPWKNE78AxNvU"  # Укажите токен здесь
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Лучше из env-переменных
 application = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветственное сообщение с клавиатурой."""
     keyboard = [
         [KeyboardButton("Как создать накладную?")],
         [KeyboardButton("Где отчёт о прибыли?")],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    
     await update.message.reply_text(
         "Здравствуйте! Я бот помощи по 1С.\n"
         "Задайте вопрос или выберите пример ниже.",
@@ -40,11 +38,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет новый пример (только для админа)."""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text("Эта команда доступна только администратору.")
         return
-
     text = update.message.text.replace("/learn", "", 1).strip()
     if "|" not in text:
         await update.message.reply_text(
@@ -52,18 +48,16 @@ async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Пример: /learn Как обновить 1С? | 1. Сделайте копию базы..."
         )
         return
-
     question, answer = map(str.strip, text.split("|", 1))
     nlp.add_example(question, answer)
     await update.message.reply_text(f"✅ Пример добавлен:\n\n**Вопрос:** {question}\n**Ответ:** {answer}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает текстовые сообщения от пользователя."""
     query = update.message.text
     answer = nlp.find_best_answer(query)
     await update.message.reply_text(answer, parse_mode="Markdown")
 
-# Добавляем обработчики (глобально)
+# Регистрируем обработчики
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("learn", learn))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
