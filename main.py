@@ -35,5 +35,3 @@ def webhook():
 def health():
     return jsonify({'status': 'ok', 'service': 'Telegram 1C Bot'})
 
-if __name__ == '__main__':
-    app.run()
