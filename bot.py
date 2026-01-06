@@ -16,11 +16,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # Инициализация NLP‑ядра
 nlp = NLPEngine()
 
-# ID администратора
-ADMIN_ID = 123456789  # Замените на свой ID
+
+# ID администратора (замените на свой Telegram ID)
+ADMIN_ID = 123456789
 
 
 # Токен из переменных окружения
@@ -28,12 +30,14 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
+
 application = Application.builder().token(TOKEN).build()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [KeyboardButton("Как создать накладную?")],
-        [KeyboardButton("Где отчёт о прибыли?")],
+        [KeyboardButton("Как создать накладную?"), KeyboardButton("Где отчёт о прибыли?")],
+        [KeyboardButton("Как провести оплату поставщику?")]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
@@ -46,6 +50,7 @@ async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text("Эта команда доступна только администратору.")
         return
+
     text = update.message.text.replace("/learn", "", 1).strip()
     if "|" not in text:
         await update.message.reply_text(
@@ -53,9 +58,13 @@ async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Пример: /learn Как обновить 1С? | 1. Сделайте копию базы..."
         )
         return
+
     question, answer = map(str.strip, text.split("|", 1))
     nlp.add_example(question, answer)
-    await update.message.reply_text(f"✅ Пример добавлен:\n\n**Вопрос:** {question}\n**Ответ:** {answer}")
+    await update.message.reply_text(
+        f"✅ Пример добавлен:\n\n**Вопрос:** {question}\n**Ответ:** {answer}",
+        parse_mode="Markdown"
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
