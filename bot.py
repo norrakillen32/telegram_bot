@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 nlp = NLPEngine()
 
 # ID администратора (ваш Telegram ID, чтобы защитить /learn)
-ADMIN_ID = 123456789  # Замените на свой ID
+ADMIN_ID = 7918581679  # Замените на свой ID
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -62,7 +62,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     # Укажите токен бота от @BotFather
-    TOKEN = "ВАШ_ТОКЕН_ТЕЛЕГРАМ_БОТА"
+    TOKEN = "8572890476:AAHVRIrKb_8JuZI_gvjWputPWKNE78AxNvU"
 
 
     # Создаём приложение
