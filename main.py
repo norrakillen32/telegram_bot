@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
 from telegram import Update
-from bot import application  # Импортируем приложение бота
+
+# Импортируем ГЛОБАЛЬНЫЙ объект application из bot.py
+from bot import application
 
 app = Flask(__name__)
 
-@app.route(f"/{TOKEN}", methods=["POST"])
+@app.route(f"/{application.bot.token}", methods=["POST"])
 def webhook():
     """Обрабатывает вебхуки от Telegram."""
     json_string = request.get_data().decode("utf-8")
