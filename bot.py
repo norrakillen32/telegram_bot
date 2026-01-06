@@ -68,9 +68,7 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("learn", learn))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Функция для локального запуска (опционально)
-def main():
-    application.run_polling()
+
 
 if __name__ == '__main__':
     main()
