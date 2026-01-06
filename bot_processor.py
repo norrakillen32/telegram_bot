@@ -5,7 +5,7 @@ from nlp_engine import nlp_engine
 
 class TelegramAPI:
     """Работа с Telegram Bot API"""
-    
+
     def __init__(self):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not self.token:
