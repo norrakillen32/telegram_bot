@@ -1,20 +1,17 @@
 from flask import Flask, request, jsonify
-import os
-import requests
-import logging
+from telegram import Update
+from bot import application  # Импортируем приложение бота
 
 app = Flask(__name__)
 
-# Настройка логирования для отладки кодировки
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@app.route('/webhook', methods=['POST'])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = request.get_json()
-    logger.info("Получено обновление: %s", update)
+    """Обрабатывает вебхуки от Telegram."""
+    json_string = request.get_data().decode("utf-8")
+    update = Update.de_json(json_string, application.bot)
+    application.process_update(update)
     return jsonify({"status": "ok"})
-    
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "Telegram 1C Bot"})
