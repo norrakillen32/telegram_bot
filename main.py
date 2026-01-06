@@ -6,117 +6,86 @@ import requests
 
 app = Flask(__name__)
 
-# --- КОНФИГУРАЦИЯ ---
+# Настройки
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
-# --- БАЗА ЗНАНИЙ ---
-class LocalKnowledgeBase:
-    def __init__(self, file_path="knowledge_base.json"):
-        self.qa_pairs = []
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                self.qa_pairs = json.load(f)
-        except FileNotFoundError:
-            logging.warning(f"Файл {file_path} не найден")
-
-    def find_answer(self, user_question: str) -> str | None:
-        user_q = user_question.lower()
-        for qa in self.qa_pairs:
-            db_q = qa.get("question", "").lower()
-            if db_q in user_q or user_q in db_q:
-                return qa.get("answer")
-        return None
-
-knowledge_base = LocalKnowledgeBase()
-
-# --- ПОИСК В ДОКУМЕНТАЦИИ 1С (заглушка) ---
-def search_in_1c_docs(question: str) -> str:
-    return f"📘 По документации 1С:\nПо запросу '{question}' я пока ничего не нашел. Реализуйте поиск в документации."
-
-# --- ОТПРАВКА СООБЩЕНИЙ В TELEGRAM ---
-def send_telegram_message(chat_id: int, text: str):
-    """Отправляет сообщение в Telegram чат."""
-    url = f"{TELEGRAM_API_URL}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
+# База знаний
+def load_knowledge_base():
     try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status()
+        with open('knowledge_base.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return []
+
+# Поиск в базе
+def search_local_kb(question, kb):
+    q_lower = question.lower()
+    for item in kb:
+        if q_lower in item.get('question', '').lower():
+            return item.get('answer')
+    return None
+
+# Заглушка поиска в документации 1С
+def search_1c_docs(question):
+    # TODO: заменить на реальный поиск
+    return f"🔍 По запросу '{question}' в документации 1С ничего не найдено."
+
+# Отправка ответа в Telegram
+def send_message(chat_id, text):
+    try:
+        requests.post(f"{TELEGRAM_API}/sendMessage", 
+                     json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
         return True
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка отправки в Telegram: {e}")
+    except Exception as e:
+        logging.error(f"Ошибка отправки: {e}")
         return False
 
-# --- ОБРАБОТКА КОМАНД И СООБЩЕНИЙ ---
-def handle_telegram_update(update_data: dict):
-    """
-    Обрабатывает входящее обновление от Telegram.
-    """
-    if "message" not in update_data:
-        return
-    
-    message = update_data["message"]
-    chat_id = message["chat"]["id"]
-    text = message.get("text", "").strip()
-    
-    if not text:
-        return
-    
-    logging.info(f"Обработка: chat_id={chat_id}, text='{text}'")
-    
-    # Обработка команды /start
-    if text.startswith("/start"):
-        welcome_text = (
-            "Привет! Я бот-помощник по 1С.\n\n"
-            "Задайте вопрос, и я:\n"
-            "1. Сначала поищу ответ в своей базе знаний\n"
-            "2. Если не найду — обращусь к документации 1С\n\n"
-            "Попробуйте: 'Как создать накладную?' или 'Где отчет о прибылях?'"
-        )
-        send_telegram_message(chat_id, welcome_text)
-        return
-    
-    # ЭТАП 1: Поиск в локальной базе знаний
-    answer = knowledge_base.find_answer(text)
-    
-    # ЭТАП 2: Если не нашли, ищем в документации
-    if not answer:
-        answer = search_in_1c_docs(text)
-    
-    # Отправляем ответ
-    send_telegram_message(chat_id, answer)
-
-# --- FLASK ЭНДПОИНТЫ ---
+# Обработчик вебхука
 @app.route('/webhook', methods=['POST'])
-def webhook():
-    """Точка входа для вебхука от Telegram."""
+def webhook_handler():  # Уникальное имя
     try:
-        update_data = request.get_json()
-        if not update_data:
-            return jsonify({"status": "error", "message": "Нет данных"}), 400
-        
-        logging.info(f"Получен вебхук: {update_data}")
-        
-        # Обрабатываем обновление
-        handle_telegram_update(update_data)
-        
-        return jsonify({"status": "ok"}), 200
-    
+        data = request.json
+        if not data or 'message' not in data:
+            return jsonify({"status": "error"}), 400
+
+        message = data['message']
+        chat_id = message['chat']['id']
+        text = message.get('text', '').strip()
+
+        # Команда /start
+        if text == '/start':
+            welcome_text = (
+                "👋 <b>Привет! Я бот-помощник по 1С</b>\n\n"
+                "Задайте вопрос, и я:\n"
+                "1️⃣ Сначала поищу в базе знаний\n"
+                "2️⃣ Если не найду — поищу в документации 1С\n\n"
+                "Примеры вопросов:\n"
+                "• Как создать накладную?\n"
+                "• Где отчет о прибылях?"
+            )
+            send_message(chat_id, welcome_text)
+            return jsonify({"status": "ok"})
+
+        # Этап 1: Поиск в локальной базе
+        kb_data = load_knowledge_base()
+        answer = search_local_kb(text, kb_data)
+
+        # Этап 2: Если не нашли - ищем в документации
+        if not answer:
+            answer = search_1c_docs(text)
+
+        # Отправляем ответ
+        send_message(chat_id, answer)
+        return jsonify({"status": "ok"})
+
     except Exception as e:
-        logging.error(f"Ошибка в /webhook: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        logging.error(f"Ошибка: {e}")
+        return jsonify({"status": "error"}), 500
 
+# Health check
 @app.route('/', methods=['GET'])
-def health_check():
-    return jsonify({"status": "ok", "service": "Telegram 1C Bot"})
-
-@app.route('/', methods=['GET'])
-def health_check():
-    return jsonify({"status": "ok", "service": "Telegram 1C Bot"})
+def health_handler():  # Уникальное имя
+    return jsonify({"status": "ok", "service": "1C Bot"})
