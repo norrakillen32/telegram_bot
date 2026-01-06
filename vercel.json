@@ -3,30 +3,17 @@
   "builds": [
     {
       "src": "main.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "500mb",
-        "runtime": "python3.9"
-      }
+      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/webhook",
-      "dest": "/api/main" 
+      "dest": "/main.py"
     },
     {
       "src": "/(.*)",
       "status": 404
     }
-  ],
-  "functions": {
-    "api/*": {
-      "memory": 2048,
-      "maxDuration": 10
-    }
-  },
-  "env": {
-    "TRANSFORMERS_OFFLINE": "1"
-  }
+  ]
 }
