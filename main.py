@@ -1,9 +1,11 @@
 from flask import Flask, request, jsonify
 from bot import application
 import logging
+from flask_cors import CORS
+
 
 app = Flask(__name__)
-
+CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
