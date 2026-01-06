@@ -1,66 +1,33 @@
 from flask import Flask, request, jsonify
-import os
-import requests
+from bot import application  # Импортируем application из bot.py
 import logging
 
 app = Flask(__name__)
 
-# Настройка логирования для отладки кодировки
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    # Получаем JSON-обновление от Telegram
     update = request.get_json()
-    logger.info("Получено обновление: %s", update)
+    if not update:
+        logger.error("Пустое обновление")
+        return jsonify({'status': 'error'}), 400
 
-    if 'message' in update and 'text' in update['message']:
-        chat_id = update['message']['chat']['id']
-        user_text = update['message']['text']
-        
-        # Явная проверка кодировки текста (отладка)
-        try:
-            user_text.encode('utf-8')
-            logger.info("Текст в UTF-8: %s", user_text)
-        except UnicodeEncodeError as e:
-            logger.error("Ошибка кодировки: %s", e)
-            return jsonify({'status': 'error', 'message': 'Invalid encoding'}), 400
+    # Преобразуем JSON в объект Update и передаём в Application
+    from telegram import Update
+    from telegram.ext import Dispatcher
+    update = Update.de_json(update, application.bot)
+    application.process_update(update)  # Обрабатываем обновление
 
-        # Отправляем ответ
-        send_message(chat_id, f"Вы написали: {user_text}")
-    else:
-        logger.info("Не текстовое сообщение: %s", update)
-
+    logger.info("Обновление обработано")
     return jsonify({'status': 'ok'}), 200
 
-def send_message(chat_id: int, text: str):
-    """Отправка сообщения через Telegram API с явным указанием UTF-8"""
-    try:
-        # Формируем URL (убедимся, что токен не содержит не-ASCII символов)
-        token = os.getenv('TELEGRAM_BOT_TOKEN')
-        if not token:
-            logger.error("TELEGRAM_BOT_TOKEN не задан!")
-            return
-
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        
-        # Python 3 строки уже Unicode — не нужно перекодировать
-        payload = {
-            "chat_id": chat_id,
-            "text": text
-        }
-        
-        headers = {
-            "Content-Type": "application/json; charset=utf-8"
-        }
-
-        response = requests.post(url, json=payload, headers=headers)
-        logger.info("Ответ Telegram: %s", response.status_code)
-        if not response.ok:
-            logger.error("Ошибка Telegram API: %s", response.text)
-
-    except Exception as e:
-        logger.error("Ошибка при отправке сообщения: %s", e)
+@app.route('/')
+def health():
+    return jsonify({'status': 'ok', 'service': 'Telegram 1C Bot'})
 
 if __name__ == '__main__':
     app.run()
