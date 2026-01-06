@@ -10,20 +10,24 @@ from telegram.ext import (
 from nlp_engine import NLPEngine
 import logging
 
-# Настройка логирования
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # Инициализация NLP‑ядра
 nlp = NLPEngine()
 
-# ID администратора (ваш Telegram ID)
+# ID администратора
 ADMIN_ID = 123456789  # Замените на свой ID
 
-# Создаём приложение ГЛОБАЛЬНО (чтобы можно было импортировать)
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Лучше из env-переменных
+
+# Токен из переменных окружения
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
+
 application = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -62,8 +66,3 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("learn", learn))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-
-
-if __name__ == '__main__':
-    main()
