@@ -204,7 +204,7 @@ class BotProcessor:
     
     def _handle_option_selection(self, chat_id: int, option_number: int) -> bool:
         """Обработка выбора номера варианта из уточнения"""
-        response = self.nlp_engine.get_option_selection(option_number)
+        response = self.nlp_engine.get_option_selection(chat_id, option_number)
         
         if response:
             session = self._get_user_session(chat_id)
@@ -245,7 +245,7 @@ class BotProcessor:
         
         button_lower = button_text.lower()
         
-        if button_lower == "⬅️ назад":
+        if button_lower == "⬅️ назад" or button_lower == "назад":
             session['current_menu'] = 'main'
             keyboard = self.formatter.create_main_keyboard()
             return self.telegram.send_message(
@@ -254,7 +254,7 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        elif button_lower == "🏠 в главное меню":
+        elif button_lower == "🏠 в главное меню" or button_lower == "главное меню":
             session['current_menu'] = 'main'
             keyboard = self.formatter.create_main_keyboard()
             return self.telegram.send_message(
@@ -263,7 +263,7 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        elif "накладные" in button_lower or button_text == "📦 накладные":
+        elif "накладные" in button_lower or button_text == "📦 Накладные":
             session['current_menu'] = 'invoices'
             keyboard = self.formatter.create_invoices_keyboard()
             return self.telegram.send_message(
@@ -272,7 +272,7 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        elif "отчеты" in button_lower or button_text == "📊 отчеты":
+        elif "отчеты" in button_lower or button_text == "📊 Отчеты":
             session['current_menu'] = 'reports'
             keyboard = self.formatter.create_reports_keyboard()
             return self.telegram.send_message(
@@ -281,7 +281,7 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        elif "платежи" in button_lower or button_text == "💰 платежи":
+        elif "платежи" in button_lower or button_text == "💰 Платежи":
             session['current_menu'] = 'payments'
             keyboard = self.formatter.create_payments_keyboard()
             return self.telegram.send_message(
@@ -290,21 +290,14 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        elif button_text == "📋 документы":
+        elif button_text == "📋 Документы" or button_lower == "документы":
+            # Обработка кнопки "Документы" как обычного запроса
             session['current_menu'] = 'documents'
-            keyboard = {
-                "keyboard": [
-                    [{"text": "📄 Счета"}, {"text": "📑 Акта"}],
-                    [{"text": "📝 Договоры"}, {"text": "🏢 Организации"}],
-                    [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
-                ],
-                "resize_keyboard": True
-            }
-            return self.telegram.send_message(
-                chat_id,
-                "📋 <b>Раздел «Документы»</b>\n\nВыберите тип документа:",
-                reply_markup=keyboard
-            )
+            return self.handle_message(chat_id, "📋 Документы")
+        
+        elif button_text == "🆘 Помощь" or button_lower == "помощь":
+            # Обработка кнопки "Помощь" как команды
+            return self._handle_help(chat_id, "")
         
         # Для остальных кнопок используем NLPEngine
         return self.handle_message(chat_id, button_text)
@@ -321,7 +314,7 @@ class BotProcessor:
             else:
                 session['waiting_for_clarification'] = False
         
-        final_answer = self.nlp_engine.get_final_answer(user_message)
+        final_answer = self.nlp_engine.get_final_answer(chat_id, user_message)
         return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
@@ -367,4 +360,3 @@ class BotProcessor:
 
 # Создаем глобальный экземпляр процессора
 bot_processor = BotProcessor()
-            
