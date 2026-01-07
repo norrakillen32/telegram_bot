@@ -734,24 +734,40 @@ class NLPEngine:
         }
         
         return result
-
+    def process_query(self, user_message: str) -> Dict[str, Any]:
+            """Обработка запроса с возвратом структурированного ответа"""
+            analysis = self.process_message(user_message)
+            
+            result = {
+                'answer': '',
+                'needs_clarification': False,
+                'options': [],
+                'original_question': '',
+                'confidence': analysis.get('kb_confidence', 0)
+            }
+            
+            # Если нашли в базе знаний
+            if analysis['has_kb_answer']:
+                confidence = analysis['kb_confidence']
+                
+                # Если уверенность низкая (< 65%), предлагаем уточнить
+                    if confidence < 0.65:
+                        clarification_response, options = self.get_clarification_response(analysis)
+                        result['answer'] = clarification_response
+                        result['needs_clarification'] = True
+                        result['options'] = options
+                else:
+                    # Форматируем обычный ответ
+                    result['answer'] = self._format_standard_response(analysis)
+            else:
+                result['answer'] = self._get_search_suggestions(user_message)
+            
+            return result
 
     def get_final_answer(self, user_message: str) -> str:
-        analysis = self.process_message(user_message)
-
-        # Если нашли в базе знаний
-        if analysis['has_kb_answer']:
-            confidence = analysis['kb_confidence']
-
-            # Если уверенность низкая (< 65%), предлагаем уточнить
-            if confidence < 0.65:
-                return self.get_clarification_response(analysis)
-
-            # Если уверенность высокая, показываем обычный ответ
-            return self._format_standard_response(analysis)
-
-        # Если ничего не нашли
-        return self._get_search_suggestions(user_message)
+        """Старый метод для обратной совместимости"""
+        result = self.process_query(user_message)
+        return result['answer']
 
     def get_clarification_response(self, analysis: Dict) -> str:
         """Универсальная генерация уточняющего ответа с кэшированием"""
@@ -777,12 +793,18 @@ class NLPEngine:
         )
         
         # Формируем интерактивное сообщение
-        return self._create_interactive_clarification(
+        message = self._create_interactive_clarification(
             original_q,
             category_questions,
-            analysis.get('intent_description', ''),
-            user_query=analysis.get('original_message', '')
+            analysis.get('intent_description', '')
         )
+        
+        # Формируем словарь вариантов
+        options = {}
+        for i, alt in enumerate(category_questions, 1):
+            options[i] = alt
+        
+        return message, options
     def _get_questions_by_categories(
         self, 
         categories: List[str], 
@@ -958,8 +980,6 @@ class NLPEngine:
                 alternatives_text.append(f"{option_counter}. {button_text} {question}")
                 option_counter += 1
         
-        # Сохраняем карту опций в сессии (нужно будет реализовать хранение состояния)
-        self._current_options = option_map
         
         # Определяем общую категорию
         if intent_description and intent_description != 'Неизвестный запрос':
