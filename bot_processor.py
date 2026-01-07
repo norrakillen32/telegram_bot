@@ -1,21 +1,21 @@
 import os
+import json
+import re
+import difflib
 import requests
-from typing import Dict, Any
-from nlp_engine import nlp_engine
+from typing import Dict, Any, List, Optional, Tuple
 
-class TelegramAPI:
-    """Работа с Telegram Bot API"""
-
+class TelegramBot:
+    """Работа с Telegram API"""
+    
     def __init__(self):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
-        
         self.api_url = f"https://api.telegram.org/bot{self.token}"
     
-    def send_message(self, chat_id: int, text: str, 
-                    parse_mode: str = "HTML",
-                    reply_markup: Dict = None) -> bool:
+    def send_message(self, chat_id: int, text: str, parse_mode: str = "HTML", 
+                     reply_markup: Dict = None) -> bool:
         """Отправка сообщения в Telegram"""
         try:
             payload = {
@@ -32,22 +32,17 @@ class TelegramAPI:
                 json=payload,
                 timeout=10
             )
-            
             return response.status_code == 200
-            
         except Exception as e:
             print(f"Ошибка отправки сообщения: {e}")
             return False
     
-    def send_typing_action(self, chat_id: int) -> bool:
-        """Отправка индикатора 'печатает'"""
+    def send_chat_action(self, chat_id: int, action: str = "typing") -> bool:
+        """Отправка действия (печатает, загружает фото и т.д.)"""
         try:
             response = requests.post(
                 f"{self.api_url}/sendChatAction",
-                json={
-                    "chat_id": chat_id,
-                    "action": "typing"
-                },
+                json={"chat_id": chat_id, "action": action},
                 timeout=5
             )
             return response.status_code == 200
@@ -55,7 +50,7 @@ class TelegramAPI:
             return False
 
 class ResponseFormatter:
-    """Форматирование ответов"""
+    """Форматирование ответов и клавиатур"""
     
     @staticmethod
     def format_welcome_message() -> str:
@@ -78,205 +73,24 @@ class ResponseFormatter:
 <b>⚡ Просто задайте ваш вопрос!</b>"""
     
     @staticmethod
-    def format_help_message() -> str:
-        """Форматирование справки"""
-        return """<b>🆘 Справка по использованию бота:</b>
-
-<b>Основные команды:</b>
-/start — начать работу с ботом
-/help — показать эту справку
-/knowledge — показать доступные темы в базе знаний
-/feedback — оставить отзыв
-
-<b>Как задавать вопросы:</b>
-1. <i>Конкретно</i>: "Как создать накладную в 1С?"
-2. <i>С контекстом</i>: "Мне нужно провести оплату поставщику"
-3. <i>По шагам</i>: "Какие этапы создания отчета?"
-
-<b>📊 Статистика вашего диалога</b> доступна по команде /stats
-
-<b>🔧 Техническая поддержка:</b> @ваш_логин_поддержки"""
-    
-    @staticmethod
-    def format_knowledge_topics(kb_data: list) -> str:
-        """Форматирование списка тем из базы знаний"""
-        if not kb_data:
-            return "📚 <b>База знаний пуста.</b>\n\nАдминистратор еще не добавил вопросы и ответы."
-        
-        topics = []
-        for i, item in enumerate(kb_data[:15], 1):  # Ограничиваем 15 темами
-            question = item.get('question', 'Без названия')
-            if len(question) > 50:
-                question = question[:47] + "..."
-            topics.append(f"{i}. {question}")
-        
-        return f"""📚 <b>Доступные темы в базе знаний ({len(kb_data)}):</b>
-
-{chr(10).join(topics)}
-
-<i>Задайте вопрос по одной из этих тем для получения подробного ответа.</i>"""
-    
-    @staticmethod
-    def create_keyboard_markup(buttons: list) -> Dict:
-        """Создание клавиатуры для Telegram"""
-        keyboard = []
-        
-        for i in range(0, len(buttons), 2):
-            row = buttons[i:i+2]
-            keyboard.append([{"text": btn} for btn in row])
-        
+    def create_main_keyboard() -> Dict:
+        """Создание главной клавиатуры"""
         return {
-            "keyboard": keyboard,
+            "keyboard": [
+                [{"text": "📦 Накладные"}, {"text": "📊 Отчеты"}],
+                [{"text": "💰 Платежи"}, {"text": "📋 Документы"}],
+                [{"text": "📈 Финансы"}, {"text": "👥 Контрагенты"}],
+                [{"text": "⚙️ Настройки"}, {"text": "🆘 Помощь"}]
+            ],
             "resize_keyboard": True,
-            "one_time_keyboard": False
+            "one_time_keyboard": False,
+            "input_field_placeholder": "Выберите раздел или задайте вопрос..."
         }
-
-class BotProcessor:
-    """Основной процессор бота"""
     
-    def __init__(self):
-        self.telegram = TelegramAPI()
-        self.formatter = ResponseFormatter()
-        self.user_sessions = {}  # Простое хранение сессий
-    
-    def _get_user_session(self, user_id: int) -> Dict:
-        """Получение или создание сессии пользователя"""
-        if user_id not in self.user_sessions:
-            self.user_sessions[user_id] = {
-                'message_count': 0,
-                'first_seen': None,
-                'last_activity': None,
-                'questions_history': []
-            }
-        return self.user_sessions[user_id]
-    
-    def _update_user_session(self, user_id: int, question: str):
-        """Обновление сессии пользователя"""
-        session = self._get_user_session(user_id)
-        session['message_count'] += 1
-        session['last_activity'] = 'now'
-        
-        # Сохраняем историю вопросов (последние 10)
-        session['questions_history'].append(question)
-        if len(session['questions_history']) > 10:
-            session['questions_history'].pop(0)
-    
-    def handle_command(self, chat_id: int, command: str, args: str = "") -> bool:
-        """Обработка команд"""
-        commands = {
-            '/start': self._handle_start,
-            '/help': self._handle_help,
-            '/knowledge': self._handle_knowledge,
-            '/stats': self._handle_stats,
-            '/feedback': self._handle_feedback
-        }
-        handler = commands.get(command.split('@')[0])  # Убираем username бота если есть
-        if handler:
-            return handler(chat_id, args)
-        
-        return self._handle_unknown_command(chat_id, command)
-    
-    def _handle_start(self, chat_id: int, args: str) -> bool:
-    """Обработка команды /start с улучшенной клавиатурой"""
-    # Главная клавиатура
-    main_keyboard = {
-        "keyboard": [
-            [{"text": "📦 Накладные"}, {"text": "📊 Отчеты"}],
-            [{"text": "💰 Платежи"}, {"text": "📋 Документы"}],
-            [{"text": "📈 Финансы"}, {"text": "👥 Контрагенты"}],
-            [{"text": "⚙️ Настройки"}, {"text": "🆘 Помощь"}]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Выберите раздел или задайте вопрос..."
-    }
-    
-    # Инлайн-кнопки для быстрых действий
-    inline_keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "📦 Создать накладную", "callback_data": "create_invoice"},
-                {"text": "💰 Оплата", "callback_data": "create_payment"}
-            ],
-            [
-                {"text": "📊 Отчет", "callback_data": "open_report"},
-                {"text": "👤 По клиенту", "callback_data": "by_client"}
-            ],
-            [
-                {"text": "📚 База знаний", "callback_data": "open_knowledge"},
-                {"text": "📞 Поддержка", "url": "https://t.me/ваш_канал_поддержки"}
-            ]
-        ]
-    }
-    
-    # Отправляем сообщение с инлайн-кнопками
-    return self.telegram.send_message(
-        chat_id,
-        self.formatter.format_welcome_message(),
-        reply_markup=inline_keyboard
-    )
-    
-    def _handle_help(self, chat_id: int, args: str) -> bool:
-        """Обработка команды /help"""
-        return self.telegram.send_message(
-            chat_id,
-            self.formatter.format_help_message()
-        )
-    
-    def _handle_knowledge(self, chat_id: int, args: str) -> bool:
-        """Обработка команды /knowledge"""
-        # Загружаем базу знаний для показа тем
-        try:
-            import json
-            with open('knowledge_base.json', 'r', encoding='utf-8') as f:
-                kb_data = json.load(f)
-        except:
-            kb_data = []
-        
-        return self.telegram.send_message(
-            chat_id,
-            self.formatter.format_knowledge_topics(kb_data)
-        )
-        
-    def handle_button_click(self, chat_id: int, button_text: str) -> bool:
-        """Обработка нажатия кнопок главного меню"""
-        button_responses = {
-            "📦 накладные": self._show_invoices_menu,
-            "📊 отчеты": self._show_reports_menu,
-            "💰 платежи": self._show_payments_menu,
-            "📋 документы": self._show_documents_menu,
-            "📈 финансы": self._show_finance_menu,
-            "👥 контрагенты": self._show_contractors_menu,
-            "⚙️ настройки": self._show_settings_menu,
-            "🆘 помощь": self._show_help_menu
-        }
-        
-        button_lower = button_text.lower()
-        for btn_key, handler in button_responses.items():
-            if btn_key in button_lower:
-                return handler(chat_id)
-        
-        return self.telegram.send_message(chat_id, "Раздел в разработке...")
-    
-    def handle_callback_query(self, chat_id: int, callback_data: str) -> bool:
-        """Обработка инлайн-кнопок"""
-        callback_handlers = {
-            "create_invoice": lambda: self._handle_create_invoice(chat_id),
-            "create_payment": lambda: self._handle_create_payment(chat_id),
-            "open_report": lambda: self._handle_open_report(chat_id),
-            "by_client": lambda: self._handle_by_client(chat_id),
-            "open_knowledge": lambda: self._handle_open_knowledge(chat_id)
-        }
-        
-        handler = callback_handlers.get(callback_data)
-        if handler:
-            return handler()
-        
-        return self.telegram.send_message(chat_id, "Действие не найдено")
-    
-    def _show_invoices_menu(self, chat_id: int) -> bool:
-        """Показать меню накладных"""
-        invoices_menu = {
+    @staticmethod
+    def create_invoices_keyboard() -> Dict:
+        """Создание клавиатуры для раздела Накладные"""
+        return {
             "keyboard": [
                 [{"text": "📦 Новая накладная"}, {"text": "📋 Копировать накладную"}],
                 [{"text": "🔄 Создать УПД"}, {"text": "🚚 ТТН для перевозки"}],
@@ -285,16 +99,11 @@ class BotProcessor:
             ],
             "resize_keyboard": True
         }
-        
-        return self.telegram.send_message(
-            chat_id,
-            "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие или задайте вопрос:",
-            reply_markup=invoices_menu
-        )
     
-    def _show_reports_menu(self, chat_id: int) -> bool:
-        """Показать меню отчетов"""
-        reports_menu = {
+    @staticmethod
+    def create_reports_keyboard() -> Dict:
+        """Создание клавиатуры для раздела Отчеты"""
+        return {
             "keyboard": [
                 [{"text": "📈 Прибыль и убытки"}, {"text": "💰 Денежный поток"}],
                 [{"text": "📦 Остатки товаров"}, {"text": "👥 Дебиторская задолженность"}],
@@ -303,18 +112,190 @@ class BotProcessor:
             ],
             "resize_keyboard": True
         }
+    
+    @staticmethod
+    def create_payments_keyboard() -> Dict:
+        """Создание клавиатуры для раздела Платежи"""
+        return {
+            "keyboard": [
+                [{"text": "💳 Оплата поставщику"}, {"text": "💰 Поступление от клиента"}],
+                [{"text": "💵 Выдача под отчет"}, {"text": "🏦 Банковские выписки"}],
+                [{"text": "🧾 Авансовые отчеты"}, {"text": "📑 Кассовая книга"}],
+                [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
+            ],
+            "resize_keyboard": True
+        }
+
+class KnowledgeBaseSearcher:
+    """Поиск в базе знаний"""
+    
+    def __init__(self, file_path: str = "knowledge_base.json"):
+        self.file_path = file_path
+        self.kb_data = []
+        self._load_knowledge_base()
+    
+    def _load_knowledge_base(self):
+        """Загрузка базы знаний из JSON"""
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                self.kb_data = json.load(f)
+                print(f"✅ База знаний загружена: {len(self.kb_data)} записей")
+        except FileNotFoundError:
+            print(f"⚠️ Файл {self.file_path} не найден")
+            self.kb_data = []
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Ошибка чтения JSON: {e}")
+            self.kb_data = []
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки базы знаний: {e}")
+            self.kb_data = []
+    
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Нормализация текста"""
+        text = text.lower().strip()
+        text = re.sub(r'[^\w\s]', ' ', text)  # Удаляем пунктуацию
+        text = re.sub(r'\s+', ' ', text)      # Убираем лишние пробелы
+        return text
+    
+    def find_best_match(self, user_question: str, threshold: float = 0.4) -> Tuple[Optional[str], float]:
+        """Поиск лучшего совпадения в базе знаний"""
+        if not self.kb_data:
+            return None, 0.0
         
+        user_q = self.normalize_text(user_question)
+        best_answer = None
+        best_score = 0.0
+        
+        for item in self.kb_data:
+            item_question = item.get('question', '')
+            item_q = self.normalize_text(item_question)
+            
+            # Рассчитываем схожесть текстов
+            score = difflib.SequenceMatcher(None, user_q, item_q).ratio()
+            
+            # Дополнительная проверка на вхождение ключевых слов
+            if score < threshold:
+                # Разбиваем на слова и проверяем совпадения
+                user_words = set(user_q.split())
+                item_words = set(item_q.split())
+                common_words = user_words.intersection(item_words)
+                if common_words:
+                    score = max(score, len(common_words) / max(len(user_words), 1) * 0.8)
+            
+            if score > best_score:
+                best_score = score
+                best_answer = item.get('answer')
+        
+        return best_answer, best_score
+    
+    def search_answer(self, question: str) -> str:
+        """Основная функция поиска ответа"""
+        # Проверяем специальные кнопки и команды
+        special_responses = {
+            # Кнопки главного меню
+            "📦 накладные": "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие:\n• 📦 Новая накладная — создать с нуля\n• 📋 Копировать накладную — использовать шаблон\n• 🔄 Создать УПД — универсальный передаточный документ\n• 🚚 ТТН для перевозки — товарно-транспортная накладная\n• 🔍 Поиск накладной — найти по номеру или контрагенту\n• 📊 Статистика накладных — анализ продаж",
+            "📊 отчеты": "📊 <b>Раздел «Отчеты»</b>\n\nОсновные отчеты:\n• 📈 Прибыль и убытки — финансовый результат\n• 💰 Денежный поток — движение денежных средств\n• 📦 Остатки товаров — наличие на складах\n• 👥 Дебиторская задолженность — долги покупателей\n• 📊 Продажи по периодам — динамика продаж\n• 📋 Товарооборот — оборачиваемость товаров",
+            "💰 платежи": "💰 <b>Раздел «Платежи»</b>\n\nДоступные действия:\n• 💳 Оплата поставщику — платежное поручение\n• 💰 Поступление от клиента — оприходование оплаты\n• 💵 Выдача под отчет — аванс сотруднику\n• 🏦 Банковские выписки — загрузка операций из банка\n• 🧾 Авансовые отчеты — расчеты с подотчетными лицами\n• 📑 Кассовая книга — учет наличных операций",
+            "📋 документы": "📋 <b>Раздел «Документы»</b>\n\nТипы документов в 1С:\n• Товарные документы (накладные, счета, акты)\n• Финансовые документы (платежные, кассовые)\n• Учетные документы (приходные/расходные ордера)\n• Документы по контрагентам (договоры, акты сверки)\n\n📍 Навигация: каждый раздел содержит свои документы",
+            
+            # Команды
+            "/start": ResponseFormatter.format_welcome_message(),
+            "помощь": "🆘 <b>Помощь по использованию бота:</b>\n\n<b>Основные команды:</b>\n/start — начать работу с ботом\n\n<b>Как задавать вопросы:</b>\n1. Конкретно: «Как создать накладную в 1С?»\n2. С контекстом: «Мне нужно провести оплату поставщику»\n3. По шагам: «Какие этапы создания отчета?»\n\n<b>Используйте кнопки меню</b> для быстрого доступа к разделам.",
+            "привет": "👋 Привет! Я бот-помощник по 1С. Используйте кнопки меню или задайте вопрос.",
+            
+            # Кнопки подменю
+            "📦 новая накладная": "🆕 <b>Создание новой накладной:</b>\n\n1. <b>Продажи</b> → <b>Реализация (акты, накладные)</b>\n2. Нажмите <b>Создать</b> → <b>Товары (накладная)</b>\n3. Заполните: контрагент, договор, склад\n4. Добавьте товары и укажите количество\n5. Нажмите <b>Провести</b> и <b>Печать</b> для ТОРГ-12",
+            "📈 прибыль и убытки": "📈 <b>Отчет «Прибыль и убытки»:</b>\n\n1. <b>Отчеты</b> → <b>Стандартные отчеты</b>\n2. Выберите <b>Оборотно-сальдовая ведомость</b>\n3. Настройте период и счета (90, 91)\n4. Нажмите <b>Сформировать</b>\n\n<b>Ключевые показатели:</b>\n• Выручка (90.01)\n• Себестоимость (90.02)\n• Валовая прибыль\n• Чистая прибыль",
+            "💳 оплата поставщику": "💳 <b>Оплата поставщику:</b>\n\n1. <b>Банк и касса</b> → <b>Платежные поручения</b>\n2. <b>Создать</b> → <b>Исходящее платежное поручение</b>\n3. Заполните: поставщик, сумма, назначение платежа\n4. Укажите банковские реквизиты\n5. Нажмите <b>Провести</b>\n\n<b>Основание:</b> можно указать счет или договор",
+        }
+        
+        question_lower = question.lower().strip()
+        
+        # Проверяем специальные ответы
+        for key, response in special_responses.items():
+            if key.lower() == question_lower or key.lower() in question_lower:
+                return response
+        
+        # Поиск в базе знаний
+        answer, confidence = self.find_best_match(question)
+        
+        if answer and confidence >= 0.4:
+            confidence_pct = int(confidence * 100)
+            return f"{answer}\n\n<i>(Найдено в базе знаний: {confidence_pct}% совпадение)</i>"
+        
+        # Fallback ответ
+        return f"""🤔 <b>По запросу '{question}' точного ответа не найдено.</b>
+
+Попробуйте:
+1. Переформулировать вопрос
+2. Использовать кнопки меню
+3. Задать более конкретный вопрос
+
+<i>База знаний содержит {len(self.kb_data)} готовых ответов по 1С.</i>"""
+
+class BotProcessor:
+    """Основной процессор бота"""
+    
+    def __init__(self):
+        self.telegram = TelegramBot()
+        self.formatter = ResponseFormatter()
+        self.kb_searcher = KnowledgeBaseSearcher()
+        self.user_sessions = {}  # Простое хранение сессий
+    
+    def _get_user_session(self, user_id: int) -> Dict:
+        """Получение или создание сессии пользователя"""
+        if user_id not in self.user_sessions:
+            self.user_sessions[user_id] = {
+                'message_count': 0,
+                'last_activity': None,
+                'current_menu': None
+            }
+        return self.user_sessions[user_id]
+    
+    def _update_user_session(self, user_id: int, message: str = None):
+        """Обновление сессии пользователя"""
+        session = self._get_user_session(user_id)
+        session['message_count'] += 1
+        session['last_activity'] = 'сейчас'
+        return session
+    
+    def _handle_start(self, chat_id: int, args: str) -> bool:
+        """Обработка команды /start с улучшенной клавиатурой"""
+        # Обновляем сессию
+        self._update_user_session(chat_id)
+        
+        # Получаем главную клавиатуру
+        keyboard = self.formatter.create_main_keyboard()
+        
+        # Отправляем приветственное сообщение с клавиатурой
         return self.telegram.send_message(
             chat_id,
-            "📊 <b>Раздел «Отчеты»</b>\n\nВыберите тип отчета:",
-            reply_markup=reports_menu
+            self.formatter.format_welcome_message(),
+            reply_markup=keyboard
         )
     
-    def _handle_create_invoice(self, chat_id: int) -> bool:
-        """Обработка создания накладной"""
-        # Используем поиск в базе знаний
-        answer = self.kb_searcher.search_answer("как создать накладную")
-        return self.telegram.send_message(chat_id, answer)
+    def _handle_help(self, chat_id: int, args: str) -> bool:
+        """Обработка команды /help"""
+        help_text = """🆘 <b>Помощь по использованию бота:</b>
+
+<b>Основные команды:</b>
+/start — начать работу с ботом
+/help — показать эту справку
+
+<b>Как задавать вопросы:</b>
+1. <i>Конкретно</i>: «Как создать накладную в 1С?»
+2. <i>С контекстом</i>: «Мне нужно провести оплату поставщику»
+3. <i>По шагам</i>: «Какие этапы создания отчета?»
+
+<b>Используйте кнопки меню</b> для быстрого доступа к разделам.
+
+<b>📊 Статистика вашего диалога</b> доступна по команде /stats
+
+<b>🔧 Техническая поддержка:</b> @ваш_логин_поддержки"""
+        
+        return self.telegram.send_message(chat_id, help_text)
+    
     def _handle_stats(self, chat_id: int, args: str) -> bool:
         """Обработка команды /stats"""
         session = self._get_user_session(chat_id)
@@ -322,91 +303,161 @@ class BotProcessor:
         stats_text = f"""📊 <b>Ваша статистика:</b>
 
 • <b>Всего сообщений:</b> {session['message_count']}
-• <b>История вопросов:</b> {len(session['questions_history'])}
 • <b>Последняя активность:</b> {session.get('last_activity', 'неизвестно')}
+• <b>Текущее меню:</b> {session.get('current_menu', 'главное')}
 
-<b>Последние вопросы:</b>
-"""
-        
-        for i, question in enumerate(session['questions_history'][-5:], 1):
-            if len(question) > 30:
-                question = question[:27] + "..."
-            stats_text += f"{i}. {question}\n"
+<b>База знаний бота:</b>
+• Загружено записей: {len(self.kb_searcher.kb_data)}
+• Разделы: Накладные, Отчеты, Платежи, Документы
+• Темы: Финансы, Контрагенты, Настройки"""
         
         return self.telegram.send_message(chat_id, stats_text)
     
-    def _handle_feedback(self, chat_id: int, args: str) -> bool:
-        """Обработка команды /feedback"""
-        feedback_text = """📝 <b>Оставить отзыв:</b>
-
-Пожалуйста, напишите ваш отзыв или предложение по улучшению бота.
-
-Ваше мнение поможет сделать бота лучше! 💪
-
-<i>Просто напишите ваше сообщение, и оно будет отправлено разработчикам.</i>"""
+    def handle_command(self, chat_id: int, command: str, args: str = "") -> bool:
+        """Обработка команд"""
+        commands = {
+            '/start': self._handle_start,
+            '/help': self._handle_help,
+            '/stats': self._handle_stats,
+        }
         
-        return self.telegram.send_message(chat_id, feedback_text)
-    
-    def _handle_unknown_command(self, chat_id: int, command: str) -> bool:
-        """Обработка неизвестной команды"""
+        # Убираем username бота если есть
+        clean_command = command.split('@')[0]
+        handler = commands.get(clean_command)
+        
+        if handler:
+            return handler(chat_id, args)
+        
+        # Неизвестная команда
         return self.telegram.send_message(
             chat_id,
-            f"🤔 <b>Неизвестная команда:</b> {command}\n\n"
-            f"Используйте /help для просмотра доступных команд."
+            f"🤔 <b>Неизвестная команда:</b> {command}\n\nИспользуйте /help для просмотра доступных команд."
         )
+    
+    def handle_button_click(self, chat_id: int, button_text: str) -> bool:
+        """Обработка нажатия кнопок меню"""
+        # Обновляем сессию
+        session = self._update_user_session(chat_id)
+        
+        # Определяем, какая клавиатура нужна
+        button_lower = button_text.lower()
+        
+        if button_lower == "⬅️ назад":
+            # Возвращаемся в главное меню
+            session['current_menu'] = 'main'
+            keyboard = self.formatter.create_main_keyboard()
+            return self.telegram.send_message(
+                chat_id,
+                "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
+                reply_markup=keyboard
+            )
+        
+        elif button_lower == "🏠 в главное меню":
+            session['current_menu'] = 'main'
+            keyboard = self.formatter.create_main_keyboard()
+            return self.telegram.send_message(
+                chat_id,
+                "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
+                reply_markup=keyboard
+            )
+        
+        elif "накладные" in button_lower or button_text == "📦 накладные":
+            session['current_menu'] = 'invoices'
+            keyboard = self.formatter.create_invoices_keyboard()
+            return self.telegram.send_message(
+                chat_id,
+                "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие или задайте вопрос:",
+                reply_markup=keyboard
+            )
+        
+        elif "отчеты" in button_lower or button_text == "📊 отчеты":
+            session['current_menu'] = 'reports'
+            keyboard = self.formatter.create_reports_keyboard()
+            return self.telegram.send_message(
+                chat_id,
+                "📊 <b>Раздел «Отчеты»</b>\n\nВыберите тип отчета:",
+                reply_markup=keyboard
+            )
+        
+        elif "платежи" in button_lower or button_text == "💰 платежи":
+            session['current_menu'] = 'payments'
+            keyboard = self.formatter.create_payments_keyboard()
+            return self.telegram.send_message(
+                chat_id,
+                "💰 <b>Раздел «Платежи»</b>\n\nВыберите действие:",
+                reply_markup=keyboard
+            )
+        
+        elif button_text == "📋 документы":
+            # Показываем меню документов
+            session['current_menu'] = 'documents'
+            keyboard = {
+                "keyboard": [
+                    [{"text": "📄 Счета"}, {"text": "📑 Акта"}],
+                    [{"text": "📝 Договоры"}, {"text": "🏢 Организации"}],
+                    [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
+                ],
+                "resize_keyboard": True
+            }
+            return self.telegram.send_message(
+                chat_id,
+                "📋 <b>Раздел «Документы»</b>\n\nВыберите тип документа:",
+                reply_markup=keyboard
+            )
+        
+        # Для остальных кнопок ищем ответ в базе знаний
+        return self.handle_message(chat_id, button_text)
     
     def handle_message(self, chat_id: int, user_message: str) -> bool:
         """Обработка обычного сообщения"""
-        # Обновляем сессию пользователя
+        # Показываем индикатор "печатает"
+        self.telegram.send_chat_action(chat_id, "typing")
+        
+        # Обновляем сессию
         self._update_user_session(chat_id, user_message)
         
-        # Показываем индикатор "печатает"
-        self.telegram.send_typing_action(chat_id)
-        
-        # Обрабатываем сообщение через NLP-движок
-        final_answer = nlp_engine.get_final_answer(user_message)
+        # Ищем ответ
+        answer = self.kb_searcher.search_answer(user_message)
         
         # Отправляем ответ
-        return self.telegram.send_message(chat_id, final_answer)
+        return self.telegram.send_message(chat_id, answer)
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
-    """Обработка входящего обновления"""
-    try:
-        # Обработка callback_query (инлайн-кнопки)
-        if 'callback_query' in update_data:
-            callback = update_data['callback_query']
-            chat_id = callback['message']['chat']['id']
-            callback_data = callback.get('data', '')
-            return self.handle_callback_query(chat_id, callback_data)
-        
-        # Обработка обычного сообщения
-        if 'message' not in update_data:
+        """Обработка входящего обновления от Telegram"""
+        try:
+            # Обработка сообщений
+            if 'message' not in update_data:
+                return False
+            
+            message = update_data['message']
+            chat_id = message['chat']['id']
+            text = message.get('text', '').strip()
+            
+            if not text:
+                return False
+            
+            print(f"📨 Сообщение от {chat_id}: {text}")
+            
+            # Определяем, команда это или обычное сообщение
+            if text.startswith('/'):
+                return self.handle_command(chat_id, text)
+            else:
+                # Проверяем, не нажата ли кнопка меню
+                button_texts = [
+                    "📦", "📊", "💰", "📋", "📈", "👥", "⚙️", "🆘",
+                    "Накладные", "Отчеты", "Платежи", "Документы",
+                    "Финансы", "Контрагенты", "Настройки", "Помощь",
+                    "⬅️", "🏠"
+                ]
+                
+                if any(btn in text for btn in button_texts):
+                    return self.handle_button_click(chat_id, text)
+                else:
+                    return self.handle_message(chat_id, text)
+            
+        except Exception as e:
+            print(f"❌ Ошибка в process_update: {e}")
             return False
-        
-        message = update_data['message']
-        chat_id = message['chat']['id']
-        text = message.get('text', '').strip()
-        
-        if not text:
-            return False
-        
-        print(f"📨 Сообщение от {chat_id}: {text[:50]}...")
-        
-        # Проверяем, не кнопка ли это
-        if self._is_button_click(text):
-            return self.handle_button_click(chat_id, text)
-        
-        # Если команда
-        if text.startswith('/'):
-            return self.handle_command(chat_id, text)
-        
-        # Обычный вопрос - ищем в базе знаний
-        answer = self.kb_searcher.search_answer(text)
-        return self.telegram.send_message(chat_id, answer)
-        
-    except Exception as e:
-        print(f"❌ Ошибка обработки: {e}")
-        return False
 
 # Создаем глобальный экземпляр процессора
-bot_processor = BotProcessor()      
+bot_processor = BotProcessor()     
