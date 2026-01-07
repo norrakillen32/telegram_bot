@@ -217,23 +217,33 @@ class BotProcessor:
                 f"Пожалуйста, выберите номер из предложенного списка."
             )
     
-    def handle_command(self, chat_id: int, command: str, args: str = "") -> bool:
-        commands = {
-            '/start': self._handle_start,
-            '/help': self._handle_help,
-            '/stats': self._handle_stats,
-        }
+    def handle_message(self, chat_id: int, user_message: str) -> bool:
+        self.telegram.send_chat_action(chat_id, "typing")
+        session = self._update_user_session(chat_id, user_message)
         
-        clean_command = command.split('@')[0]
-        handler = commands.get(clean_command)
+        # Проверяем, не является ли сообщение числом (выбором варианта)
+        if user_message.isdigit():
+            option_number = int(user_message)
+            print(f"🔢 Пользователь выбрал вариант {option_number}")
+            
+            # Пытаемся получить ответ по номеру
+            response = self.nlp_engine.get_option_selection(option_number)
+            
+            if response:
+                session['waiting_for_clarification'] = False
+                return self.telegram.send_message(chat_id, response, parse_mode="HTML")
+            else:
+                # Если не нашли по номеру, обрабатываем как обычное сообщение
+                print(f"⚠️ Вариант {option_number} не найден, обрабатываем как обычный запрос")
         
-        if handler:
-            return handler(chat_id, args)
+        # Обрабатываем как обычное сообщение
+        final_answer = self.nlp_engine.get_final_answer(user_message)
         
-        return self.telegram.send_message(
-            chat_id,
-            f"🤔 <b>Неизвестная команда:</b> {command}\n\nИспользуйте /help для просмотра доступных команд."
-        )
+        # Проверяем, не содержит ли ответ предложение выбрать номер
+        if "выберите номер варианта" in final_answer.lower():
+            session['waiting_for_clarification'] = True
+        
+        return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
     
     def handle_button_click(self, chat_id: int, button_text: str) -> bool:
         session = self._update_user_session(chat_id)
