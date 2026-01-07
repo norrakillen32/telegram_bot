@@ -124,12 +124,19 @@ class ResponseFormatter:
 
 class BotProcessor:
     """Основной процессор бота"""
-    
     def __init__(self):
         self.telegram = TelegramBot()
         self.formatter = ResponseFormatter()
-        self.nlp_engine = NLPEngine()  # Используем NLPEngine вместо KnowledgeBaseSearcher
+        self.nlp_engine = NLPEngine()
         self.user_sessions = {}
+        # Определяем кнопки как список строк
+        self.button_texts = [
+            "📦", "📊", "💰", "📋", "📈", "👥", "⚙️", "🆘",
+            "Накладные", "Отчеты", "Платежи", "Документы",
+            "Финансы", "Контрагенты", "Настройки", "Помощь",
+            "⬅️", "🏠", "накладные", "отчеты", "платежи", "документы",
+            "⬅️ Назад", "🏠 В главное меню"  # Добавим полные названия кнопок
+        ]
     
     def _get_user_session(self, user_id: int) -> Dict:
         if user_id not in self.user_sessions:
@@ -229,88 +236,124 @@ class BotProcessor:
         )
     
     def handle_button_click(self, chat_id: int, button_text: str) -> bool:
-        session = self._update_user_session(chat_id)
-        session['waiting_for_clarification'] = False
-        
-        button_lower = button_text.lower()
-        
-        if button_lower == "⬅️ назад":
-            session['current_menu'] = 'main'
-            keyboard = self.formatter.create_main_keyboard()
-            return self.telegram.send_message(
-                chat_id,
-                "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
-                reply_markup=keyboard
-            )
-        
-        elif button_lower == "🏠 в главное меню":
-            session['current_menu'] = 'main'
-            keyboard = self.formatter.create_main_keyboard()
-            return self.telegram.send_message(
-                chat_id,
-                "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
-                reply_markup=keyboard
-            )
-        
-        elif "накладные" in button_lower or button_text == "📦 накладные":
-            session['current_menu'] = 'invoices'
-            keyboard = self.formatter.create_invoices_keyboard()
-            return self.telegram.send_message(
-                chat_id,
-                "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие или задайте вопрос:",
-                reply_markup=keyboard
-            )
-        
-        elif "отчеты" in button_lower or button_text == "📊 отчеты":
-            session['current_menu'] = 'reports'
-            keyboard = self.formatter.create_reports_keyboard()
-            return self.telegram.send_message(
-                chat_id,
-                "📊 <b>Раздел «Отчеты»</b>\n\nВыберите тип отчета:",
-                reply_markup=keyboard
-            )
-        
-        elif "платежи" in button_lower or button_text == "💰 платежи":
-            session['current_menu'] = 'payments'
-            keyboard = self.formatter.create_payments_keyboard()
-            return self.telegram.send_message(
-                chat_id,
-                "💰 <b>Раздел «Платежи»</b>\n\nВыберите действие:",
-                reply_markup=keyboard
-            )
-        
-        elif button_text == "📋 документы":
-            session['current_menu'] = 'documents'
-            keyboard = {
-                "keyboard": [
-                    [{"text": "📄 Счета"}, {"text": "📑 Акта"}],
-                    [{"text": "📝 Договоры"}, {"text": "🏢 Организации"}],
-                    [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
-                ],
-                "resize_keyboard": True
-            }
-            return self.telegram.send_message(
-                chat_id,
-                "📋 <b>Раздел «Документы»</b>\n\nВыберите тип документа:",
-                reply_markup=keyboard
-            )
-        
-        # Для остальных кнопок используем NLPEngine
-        return self.handle_message(chat_id, button_text)
+        """Исправленная версия с обработкой возможных ошибок"""
+        try:
+            session = self._update_user_session(chat_id)
+            session['waiting_for_clarification'] = False
+            
+            # Приводим к нижнему регистру для сравнения
+            button_lower = button_text.lower().strip()
+            
+            # Убираем эмодзи для сравнения
+            clean_button = button_lower.replace('📦', '').replace('📊', '').replace('💰', '').replace('📋', '')\
+                                     .replace('📈', '').replace('👥', '').replace('⚙️', '').replace('🆘', '')\
+                                     .replace('⬅️', '').replace('🏠', '').strip()
+            
+            print(f"🔄 Обработка кнопки: '{button_text}' -> '{clean_button}'")
+            
+            # Обработка навигационных кнопок
+            if 'назад' in clean_button or '⬅️' in button_text:
+                session['current_menu'] = 'main'
+                keyboard = self.formatter.create_main_keyboard()
+                return self.telegram.send_message(
+                    chat_id,
+                    "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
+                    reply_markup=keyboard
+                )
+            
+            elif 'главное меню' in clean_button or '🏠' in button_text:
+                session['current_menu'] = 'main'
+                keyboard = self.formatter.create_main_keyboard()
+                return self.telegram.send_message(
+                    chat_id,
+                    "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
+                    reply_markup=keyboard
+                )
+            
+            elif 'накладные' in clean_button:
+                session['current_menu'] = 'invoices'
+                keyboard = self.formatter.create_invoices_keyboard()
+                return self.telegram.send_message(
+                    chat_id,
+                    "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие или задайте вопрос:",
+                    reply_markup=keyboard
+                )
+            
+            elif 'отчеты' in clean_button:
+                session['current_menu'] = 'reports'
+                keyboard = self.formatter.create_reports_keyboard()
+                return self.telegram.send_message(
+                    chat_id,
+                    "📊 <b>Раздел «Отчеты»</b>\n\nВыберите тип отчета:",
+                    reply_markup=keyboard
+                )
+            
+            elif 'платежи' in clean_button:
+                session['current_menu'] = 'payments'
+                keyboard = self.formatter.create_payments_keyboard()
+                return self.telegram.send_message(
+                    chat_id,
+                    "💰 <b>Раздел «Платежи»</b>\n\nВыберите действие:",
+                    reply_markup=keyboard
+                )
+            
+            elif 'документы' in clean_button:
+                session['current_menu'] = 'documents'
+                keyboard = {
+                    "keyboard": [
+                        [{"text": "📄 Счета"}, {"text": "📑 Акта"}],
+                        [{"text": "📝 Договоры"}, {"text": "🏢 Организации"}],
+                        [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
+                    ],
+                    "resize_keyboard": True
+                }
+                return self.telegram.send_message(
+                    chat_id,
+                    "📋 <b>Раздел «Документы»</b>\n\nВыберите тип документа:",
+                    reply_markup=keyboard
+                )
+            
+            # Для остальных кнопок используем NLPEngine
+            print(f"🔍 Передаем в NLP: '{button_text}'")
+            return self.handle_message(chat_id, button_text)
+            
+        except Exception as e:
+            print(f"❌ Ошибка в handle_button_click: {e}")
+            import traceback
+            traceback.print_exc()
+            # В случае ошибки пробуем обработать как обычное сообщение
+            return self.handle_message(chat_id, button_text)
     
-    def handle_message(self, chat_id: int, user_message: str) -> bool:
-        self.telegram.send_chat_action(chat_id, "typing")
-        session = self._update_user_session(chat_id, user_message)
-        
-        if session.get('waiting_for_clarification'):
-            if user_message.isdigit():
-                option_number = int(user_message)
-                return self._handle_option_selection(chat_id, option_number)
-            else:
-                session['waiting_for_clarification'] = False
-        
-        final_answer = self.nlp_engine.get_final_answer(user_message)
-        return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
+   def handle_message(self, chat_id: int, user_message: str) -> bool:
+        """Исправленная версия с обработкой ошибок"""
+        try:
+            self.telegram.send_chat_action(chat_id, "typing")
+            session = self._update_user_session(chat_id, user_message)
+            
+            if session.get('waiting_for_clarification'):
+                if user_message.isdigit():
+                    option_number = int(user_message)
+                    return self._handle_option_selection(chat_id, option_number)
+                else:
+                    session['waiting_for_clarification'] = False
+            
+            print(f"🔍 Обработка сообщения через NLP: '{user_message}'")
+            final_answer = self.nlp_engine.get_final_answer(user_message)
+            return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
+            
+        except Exception as e:
+            print(f"❌ Ошибка в handle_message: {e}")
+            import traceback
+            traceback.print_exc()
+            # Возвращаем пользователю понятное сообщение об ошибке
+            error_msg = (
+                "❌ <b>Произошла ошибка при обработке запроса</b>\n\n"
+                "Попробуйте:\n"
+                "1. Переформулировать вопрос\n"
+                "2. Использовать кнопки меню\n"
+                "3. Обратиться к администратору"
+            )
+            return self.telegram.send_message(chat_id, error_msg, parse_mode="HTML")
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
         try:
@@ -329,20 +372,24 @@ class BotProcessor:
             if text.startswith('/'):
                 return self.handle_command(chat_id, text)
             else:
-                button_texts = [
-                    "📦", "📊", "💰", "📋", "📈", "👥", "⚙️", "🆘",
-                    "Накладные", "Отчеты", "Платежи", "Документы",
-                    "Финансы", "Контрагенты", "Настройки", "Помощь",
-                    "⬅️", "🏠", "накладные", "отчеты", "платежи", "документы"
-                ]
+                # ИСПРАВЛЕННАЯ ЧАСТЬ:
+                # Проверяем, является ли текст кнопкой
+                is_button = False
+                for button in self.button_texts:
+                    # Простая проверка: если текст содержит название кнопки (без учета регистра)
+                    if button.lower() in text.lower():
+                        is_button = True
+                        break
                 
-                if any(btn in text.lower() for btn in [b.lower() for b in button_texts]):
+                if is_button:
                     return self.handle_button_click(chat_id, text)
                 else:
                     return self.handle_message(chat_id, text)
-            
+                
         except Exception as e:
             print(f"❌ Ошибка в process_update: {e}")
+            import traceback
+            traceback.print_exc()  # Добавим трассировку для отладки
             return False
 
 # Создаем глобальный экземпляр процессора
