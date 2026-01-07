@@ -350,7 +350,7 @@ class NLPEngine:
         self.intent_classifier = IntentClassifier()
         self.kb_searcher = KnowledgeBaseSearcher()
         self.button_handler = ButtonHandler(self.kb_searcher)
-        self._current_options = {}
+        self._user_options = {}  # user_id -> {option_number: item}
         print("✅ NLPEngine инициализирован")
     
     def process_message(self, user_message: str) -> Dict[str, Any]:
@@ -407,8 +407,8 @@ class NLPEngine:
         
         return result
     
-    def get_final_answer(self, user_message: str) -> str:
-        print(f"🔍 get_final_answer вызван с: '{user_message}'")
+    def get_final_answer(self, user_id: int, user_message: str) -> str:
+        print(f"🔍 get_final_answer вызван для пользователя {user_id}: '{user_message}'")
         try:
             analysis = self.process_message(user_message)
             
@@ -419,7 +419,7 @@ class NLPEngine:
                 
                 if confidence < 0.4:
                     print(f"🔄 Низкая уверенность ({confidence:.2f})")
-                    clarification_response = self.get_clarification_response(analysis)
+                    clarification_response = self.get_clarification_response(user_id, analysis)
                     return clarification_response
                 
                 if analysis.get('is_button_click'):
@@ -440,7 +440,7 @@ class NLPEngine:
             
             similar_questions = self._find_similar_questions(user_message)
             if similar_questions:
-                return self._create_similar_questions_response(user_message, similar_questions)
+                return self._create_similar_questions_response(user_id, user_message, similar_questions)
             
             suggestions = self._get_search_suggestions(user_message)
             return f"🤔 <b>К сожалению, я не смог найти ответ на ваш вопрос.</b>\n\n{suggestions}"
@@ -470,7 +470,7 @@ class NLPEngine:
         similar.sort(key=lambda x: x['similarity'], reverse=True)
         return similar[:limit]
     
-    def _create_similar_questions_response(self, user_query: str, similar_questions: List[Dict]) -> str:
+    def _create_similar_questions_response(self, user_id: int, user_query: str, similar_questions: List[Dict]) -> str:
         """Создает ответ с похожими вопросами"""
         if not similar_questions:
             return ""
@@ -485,13 +485,13 @@ class NLPEngine:
         
         response += f"\n<b>Выберите номер варианта (1-{min(3, len(similar_questions))})</b>"
         
-        self._current_options = {
+        self._user_options[user_id] = {
             i: sim['item'] for i, sim in enumerate(similar_questions[:3], 1)
         }
         
         return response
     
-    def get_clarification_response(self, analysis: Dict) -> str:
+    def get_clarification_response(self, user_id: int, analysis: Dict) -> str:
         kb_item = analysis.get('kb_item')
         if not kb_item:
             return "Извините, произошла ошибка при обработке вашего запроса."
@@ -507,6 +507,7 @@ class NLPEngine:
         )
         
         return self._create_interactive_clarification(
+            user_id,
             original_q,
             category_questions,
             "Неизвестный запрос",
@@ -548,6 +549,7 @@ class NLPEngine:
     
     def _create_interactive_clarification(
         self, 
+        user_id: int,
         original_question: str,
         alternative_questions: List[Dict],
         intent_description: str,
@@ -579,7 +581,7 @@ class NLPEngine:
                 alternatives_text.append(f"{option_counter}. 🔹 **{question}**")
             option_counter += 1
         
-        self._current_options = option_map
+        self._user_options[user_id] = option_map
         
         message = (
             f"🔍 **Нужно уточнение**\n\n"
@@ -624,12 +626,12 @@ class NLPEngine:
         
         return suggestions
     
-    def get_option_selection(self, option_number: int) -> Optional[str]:
+    def get_option_selection(self, user_id: int, option_number: int) -> Optional[str]:
         """Обработка выбора опции пользователем"""
-        print(f"🔍 Выбор опции {option_number}, доступные опции: {list(self._current_options.keys())}")
+        print(f"🔍 Выбор опции {option_number} для пользователя {user_id}, доступные опции: {self._user_options.get(user_id, {})}")
         
-        if option_number in self._current_options:
-            selected = self._current_options[option_number]
+        if user_id in self._user_options and option_number in self._user_options[user_id]:
+            selected = self._user_options[user_id][option_number]
             answer = selected.get('answer', '')
             source = selected.get('source', '')
             
@@ -639,7 +641,7 @@ class NLPEngine:
             else:
                 return answer
         
-        print(f"⚠️ Опция {option_number} не найдена")
+        print(f"⚠️ Опция {option_number} не найдена для пользователя {user_id}")
         return None
 
 # Создаем глобальный экземпляр NLP-движка
