@@ -734,164 +734,310 @@ class NLPEngine:
         }
         
         return result
-    
+
+
     def get_final_answer(self, user_message: str) -> str:
-    analysis = self.process_message(user_message)
-    
-    # Если нашли в базе знаний
-    if analysis['has_kb_answer']:
-        confidence = analysis['kb_confidence']
-        
-        # Если уверенность низкая (< 65%), предлагаем уточнить
-        if confidence < 0.65:
-            return self.get_clarification_response(analysis)
-        
-        # Если уверенность высокая, показываем обычный ответ
-        return self._format_standard_response(analysis)
-    
-    # Если ничего не нашли
-    return self._get_search_suggestions(user_message)
-    
-    def _get_search_suggestions(self, query: str) -> str:
-        """Получение предложений по поиску"""
-        normalized = self.preprocessor.normalize_text(query)
-        keywords = self.preprocessor.extract_keywords(normalized)
-        
-        # Определяем основной интент для более точных предложений
-        main_intent, _ = self.intent_classifier.classify_with_context(normalized)
-        intent_desc = self.intent_classifier.get_intent_description(main_intent)
-        
-        # Ищем похожие вопросы в базе
-        similar_questions = []
-        
-        for item in self.kb_searcher.kb_data[:15]:  # Проверяем первые 15
-            item_question = self.preprocessor.normalize_text(item.get('question', ''))
-            
-            # Проверяем совпадение ключевых слов
-            item_keywords = self.preprocessor.extract_keywords(item_question)
-            common = set(keywords) & set(item_keywords)
-            
-            if len(common) >= 1 and item_question not in similar_questions:
-                similar_questions.append(item.get('question', ''))
-            
-            if len(similar_questions) >= 3:
-                break
-        
-        suggestions = "Попробуйте:\n"
-        suggestions += "1. Использовать кнопки меню\n"
-        suggestions += f"2. Уточнить вопрос по теме: {intent_desc}\n"
-        
-        if similar_questions:
-            suggestions += "3. Возможно, вам нужен один из этих разделов:\n"
-            for i, q in enumerate(similar_questions, 1):
-                suggestions += f"   • {q}\n"
-        
-        suggestions += "4. Обратиться к администратору"
-        
-        return suggestions
-        
+        analysis = self.process_message(user_message)
+
+        # Если нашли в базе знаний
+        if analysis['has_kb_answer']:
+            confidence = analysis['kb_confidence']
+
+            # Если уверенность низкая (< 65%), предлагаем уточнить
+            if confidence < 0.65:
+                return self.get_clarification_response(analysis)
+
+            # Если уверенность высокая, показываем обычный ответ
+            return self._format_standard_response(analysis)
+
+        # Если ничего не нашли
+        return self._get_search_suggestions(user_message)
+
     def get_clarification_response(self, analysis: Dict) -> str:
-        """Универсальная генерация уточняющего ответа"""
+        """Универсальная генерация уточняющего ответа с кэшированием"""
         kb_item = analysis.get('kb_item')
-        original_q = kb_item.get('question', '') if kb_item else ''
         
-        # Получаем категории из тегов вопроса
-        item_tags = kb_item.get('tags', []) if kb_item else []
+        if not kb_item:
+            return "Извините, произошла ошибка при обработке вашего запроса."
+        
+        original_q = kb_item.get('question', '')
+        item_tags = kb_item.get('tags', [])
+        item_id = kb_item.get('id')
+        
+        # Добавляем интент как дополнительную категорию для поиска
+        search_categories = item_tags.copy()
+        if analysis.get('main_intent') and analysis['main_intent'] != 'unknown':
+            search_categories.append(analysis['main_intent'])
         
         # Ищем вопросы в тех же категориях
         category_questions = self._get_questions_by_categories(
-            item_tags, 
-            exclude_id=kb_item.get('id') if kb_item else None
+            search_categories, 
+            exclude_id=item_id,
+            min_relevance=0.2  # Минимальная релевантность
         )
         
         # Формируем интерактивное сообщение
         return self._create_interactive_clarification(
             original_q,
             category_questions,
-            analysis.get('intent_description', '')
+            analysis.get('intent_description', ''),
+            user_query=analysis.get('original_message', '')
         )
-    
     def _get_questions_by_categories(
         self, 
         categories: List[str], 
         exclude_id: Optional[int] = None,
-        limit: int = 4
+        limit: int = 4,
+        min_relevance: float = 0.1
     ) -> List[Dict]:
-        """Получение вопросов по категориям (тегам)"""
+        """Получение вопросов по категориям с учетом весов тегов"""
         if not categories:
             return []
         
         categorized_items = []
+        
+        # Веса для разных типов тегов (можно настроить)
+        tag_weights = {
+            'оплата': 2.0, 'поставщик': 2.0, 'приемка': 2.0, 'товар': 1.5,
+            'накладная': 2.0, 'отчет': 1.5, 'платеж': 2.0, 'документ': 1.2
+        }
         
         for item in self.kb_searcher.kb_data:
             if exclude_id and item.get('id') == exclude_id:
                 continue
                 
             item_tags = item.get('tags', [])
-            common_tags = set(categories) & set(item_tags)
             
-            if common_tags:
-                # Вычисляем степень релевантности
-                relevance_score = len(common_tags) / len(categories)
+            if not item_tags:
+                continue
+                
+            # Вычисляем взвешенную релевантность
+            weighted_relevance = 0
+            matched_tags = []
+            
+            for category in categories:
+                # Проверяем точное совпадение тегов
+                if category in item_tags:
+                    weight = tag_weights.get(category, 1.0)
+                    weighted_relevance += weight
+                    matched_tags.append(category)
+                # Проверяем частичное совпадение (для интентов и составных тегов)
+                else:
+                    for item_tag in item_tags:
+                        if category in item_tag or item_tag in category:
+                            weight = tag_weights.get(category, 0.8)
+                            weighted_relevance += weight * 0.7  # Коэффициент для частичного совпадения
+                            matched_tags.append(f"{category}≈{item_tag}")
+                            break
+            
+            if weighted_relevance >= min_relevance:
+                # Нормализуем релевантность
+                normalized_relevance = weighted_relevance / len(categories)
                 
                 categorized_items.append({
                     'item': item,
-                    'relevance': relevance_score,
+                    'relevance': normalized_relevance,
                     'question': item.get('question', ''),
-                    'tags': item_tags
+                    'tags': item_tags,
+                    'matched_tags': list(set(matched_tags))[:3],  # Уникальные совпадения
+                    'source': item.get('source', 'manual')
                 })
         
-        # Сортируем по релевантности
-        categorized_items.sort(key=lambda x: x['relevance'], reverse=True)
+        # Сортируем по релевантности, потом по типу источника
+        categorized_items.sort(
+            key=lambda x: (x['relevance'], 1 if x['source'] == 'manual' else 0.5),
+            reverse=True
+        )
         
         return categorized_items[:limit]
-    
+
+    def _find_similar_questions(
+        self, 
+        original_question: str,
+        tags: List[str], 
+        main_intent: str,
+        exclude_id: Optional[int] = None,
+        limit: int = 4
+    ) -> List[Dict]:
+        """Поиск похожих вопросов по тегам и интенту"""
+        similar_items = []
+
+        for item in self.kb_searcher.kb_data:
+            if exclude_id and item.get('id') == exclude_id:
+                continue
+
+            item_tags = item.get('tags', [])
+            item_intent = self._detect_item_intent(item.get('question', ''))
+
+            # Вычисляем релевантность по тегам
+            tag_relevance = 0
+            if tags and item_tags:
+                common_tags = set(tags) & set(item_tags)
+                tag_relevance = len(common_tags) / len(tags) if tags else 0
+
+            # Вычисляем релевантность по интенту
+            intent_relevance = 1.0 if item_intent == main_intent else 0.0
+
+            # Общая релевантность (можно настроить веса)
+            # Здесь теги и интент имеют одинаковый вес
+            total_relevance = (tag_relevance + intent_relevance) / 2
+
+            # Если есть хотя бы какая-то релевантность
+            if total_relevance > 0:
+                similar_items.append({
+                    'item': item,
+                    'question': item.get('question', ''),
+                    'tags': item_tags,
+                    'relevance': total_relevance
+                })
+
+        # Сортируем по релевантности
+        similar_items.sort(key=lambda x: x['relevance'], reverse=True)
+
+        return similar_items[:limit]
+
+    def _detect_item_intent(self, question: str) -> str:
+        """Определение интента для вопроса из базы знаний"""
+        normalized = self.preprocessor.normalize_text(question)
+        intent, _ = self.intent_classifier.classify_with_context(normalized)
+        return intent
+
     def _create_interactive_clarification(
         self, 
         original_question: str,
         alternative_questions: List[Dict],
-        intent_description: str
+        intent_description: str,
+        user_query: str = ""
     ) -> str:
         """Создание интерактивного уточняющего сообщения"""
         
         if not alternative_questions:
-            # Базовый вариант, если нет альтернатив
+            # Более информативный вариант, если нет альтернатив
             return (
                 "🤔 **Мне нужно уточнение.**\n\n"
-                f"Я думаю, вы имеете в виду: **«{original_question}»**\n\n"
-                "*Если это не так, пожалуйста, переформулируйте вопрос.*"
+                f"По вашему запросу **«{user_query[:50]}...»** я нашел:\n"
+                f"**«{original_question}»**\n\n"
+                "*Если это не то, что вам нужно, попробуйте:*\n"
+                "• Использовать другие ключевые слова\n"
+                "• Обратиться к разделам меню\n"
+                "• Сформулировать вопрос более конкретно"
             )
         
-        # Формируем список альтернатив с эмодзи
+        # Группируем альтернативы по типу (manual/button/menu)
+        manual_items = [a for a in alternative_questions if a.get('source') == 'manual']
+        button_items = [a for a in alternative_questions if a.get('source') in ['button', 'menu']]
+        
+        # Формируем список альтернатив
         alternatives_text = []
-        for i, alt in enumerate(alternative_questions, 1):
-            question = alt['question']
-            tags_preview = ", ".join(alt.get('tags', [])[:2]) if alt.get('tags') else ""
-            
-            if tags_preview:
-                alternatives_text.append(f"{i}. 🔹 **{question}** *({tags_preview})*")
-            else:
-                alternatives_text.append(f"{i}. 🔹 **{question}**")
+        option_counter = 1
+        option_map = {}  # Для отслеживания номеров опций
+        
+        # Сначала ручные инструкции (обычно более подробные)
+        if manual_items:
+            alternatives_text.append("**📖 Подробные инструкции:**")
+            for alt in manual_items[:2]:  # Не больше 2 ручных инструкций
+                question = alt['question']
+                relevance_percent = int(alt['relevance'] * 100)
+                tags_preview = self._format_tags_preview(alt.get('matched_tags', []))
+                
+                option_map[option_counter] = alt
+                if tags_preview:
+                    alternatives_text.append(f"{option_counter}. {question} *({tags_preview}, релевантность {relevance_percent}%)*")
+                else:
+                    alternatives_text.append(f"{option_counter}. {question} *(релевантность {relevance_percent}%)*")
+                option_counter += 1
+        
+        # Потом кнопки/меню (для быстрого доступа)
+        if button_items:
+            alternatives_text.append("\n**🔘 Быстрый доступ:**")
+            for alt in button_items[:2]:  # Не больше 2 кнопок
+                question = alt['question']
+                button_text = alt['item'].get('metadata', {}).get('button_text', '📌')
+                
+                option_map[option_counter] = alt
+                alternatives_text.append(f"{option_counter}. {button_text} {question}")
+                option_counter += 1
+        
+        # Сохраняем карту опций в сессии (нужно будет реализовать хранение состояния)
+        self._current_options = option_map
         
         # Определяем общую категорию
         if intent_description and intent_description != 'Неизвестный запрос':
-            category_info = f"**Категория:** {intent_description}\n"
+            category_info = f"**Категория:** {intent_description}\n\n"
         else:
-            category_info = ""
+            # Пытаемся определить категорию по тегам
+            if alternative_questions and alternative_questions[0].get('matched_tags'):
+                main_tags = alternative_questions[0].get('matched_tags', [])[:3]
+                category_info = f"**Теги:** {', '.join(main_tags)}\n\n"
+            else:
+                category_info = ""
         
         # Собираем финальное сообщение
         message = (
-            f"🔍 **Нужно уточнение**\n\n"
-            f"{category_info}"
-            f"Я нашел несколько вариантов, которые могут подходить:\n\n"
+            f"🔍 **Уточните, пожалуйста**\n\n"
+            f"По вашему запросу я нашел несколько вариантов:\n\n"
             f"{chr(10).join(alternatives_text)}\n\n"
             f"**Какой вариант вам нужен?**\n"
-            f"• Напишите номер (1-{len(alternative_questions)})\n"
-            f"• Или опишите задачу другими словами\n"
+            f"• Ответьте номером (1-{option_counter-1}) для быстрого выбора\n"
+            f"• Или переформулируйте запрос более конкретно\n"
             f"• Используйте кнопки меню для точного выбора\n\n"
-            f"*Самый похожий вопрос: «{original_question}»*"
+            f"*Текущий запрос: «{user_query}»*"
         )
         
-        return message        
+        return message
+    def _format_tags_preview(self, tags: List[str]) -> str:
+        """Форматирование тегов для отображения"""
+        if not tags:
+            return ""
+        
+        # Ограничиваем длину и убираем дубли
+        unique_tags = []
+        seen = set()
+        for tag in tags:
+            # Очищаем теги от специальных символов
+            clean_tag = tag.replace('≈', '~').split('~')[0]
+            if clean_tag not in seen and len(clean_tag) > 2:
+                seen.add(clean_tag)
+                unique_tags.append(clean_tag)
+        
+        return ", ".join(unique_tags[:3])
+    
+    def _handle_option_selection(self, option_number: int, current_options: Dict) -> Optional[str]:
+        """Обработка выбора опции пользователем (добавить в основной код бота)"""
+        if option_number in current_options:
+            selected = current_options[option_number]
+            item = selected['item']
+            
+            # Возвращаем ответ выбранной опции
+            answer = item.get('answer', '')
+            source = item.get('source', '')
+            
+            if source in ['button', 'menu']:
+                button_text = item.get('metadata', {}).get('button_text', '')
+                return f"🔘 **{button_text}**\n\n{answer}"
+            else:
+                return answer
+        
+        return None
+    def _format_standard_response(self, analysis: Dict) -> str:
+        """Форматирование стандартного ответа при высокой уверенности"""
+        kb_item = analysis['kb_item']
+        answer = kb_item.get('answer', '')
+        confidence_percent = int(analysis['kb_confidence'] * 100)
+
+        # Для кнопок добавляем специальное оформление
+        if analysis.get('is_button_click'):
+            source = kb_item.get('source', '')
+            button_text = kb_item.get('metadata', {}).get('button_text', '')
+            if button_text and source in ['menu', 'button']:
+                header = f"🔘 **{button_text}**\n\n"
+                return header + answer
+
+        # Для fuzzy match добавляем пояснение
+        if analysis.get('is_fuzzy_match'):
+            original_question = kb_item.get('question', '')
+            return f"✅ {answer}\n\n<i>(Возможно, вы имели в виду: '{original_question}'. Найдено с уверенностью {confidence_percent}%)</i>"
+        else:
+            return f"✅ {answer}\n\n<i>(Найдено в базе знаний с уверенностью {confidence_percent}%)</i>"       
 # Создаем глобальный экземпляр NLP-движка
 nlp_engine = NLPEngine()
