@@ -235,13 +235,14 @@ class KnowledgeBaseSearcher:
 <i>База знаний содержит {len(self.kb_data)} готовых ответов по 1С.</i>"""
 
 class BotProcessor:
-    """Основной процессор бота"""
+    """Основной процессор бота с интегрированным NLP-движком"""
     
     def __init__(self):
         self.telegram = TelegramBot()
         self.formatter = ResponseFormatter()
-        self.kb_searcher = KnowledgeBaseSearcher()
-        self.user_sessions = {}  # Простое хранение сессий
+        # Заменяем KnowledgeBaseSearcher на NLPEngine
+        self.nlp_engine = NLPEngine()
+        self.user_sessions = {}  # Хранит сессии пользователей
     
     def _get_user_session(self, user_id: int) -> Dict:
         """Получение или создание сессии пользователя"""
@@ -249,7 +250,10 @@ class BotProcessor:
             self.user_sessions[user_id] = {
                 'message_count': 0,
                 'last_activity': None,
-                'current_menu': None
+                'current_menu': None,
+                'waiting_for_clarification': False,
+                'clarification_options': {},
+                'original_query': ''
             }
         return self.user_sessions[user_id]
     
@@ -261,14 +265,13 @@ class BotProcessor:
         return session
     
     def _handle_start(self, chat_id: int, args: str) -> bool:
-        """Обработка команды /start с улучшенной клавиатурой"""
-        # Обновляем сессию
-        self._update_user_session(chat_id)
+        """Обработка команды /start"""
+        # Сбрасываем состояние уточнения
+        session = self._get_user_session(chat_id)
+        session['waiting_for_clarification'] = False
+        session['clarification_options'] = {}
         
-        # Получаем главную клавиатуру
         keyboard = self.formatter.create_main_keyboard()
-        
-        # Отправляем приветственное сообщение с клавиатурой
         return self.telegram.send_message(
             chat_id,
             self.formatter.format_welcome_message(),
@@ -288,11 +291,12 @@ class BotProcessor:
 2. <i>С контекстом</i>: «Мне нужно провести оплату поставщику»
 3. <i>По шагам</i>: «Какие этапы создания отчета?»
 
-<b>Используйте кнопки меню</b> для быстрого доступа к разделам.
+<b>Интерактивные возможности:</b>
+• Бот может уточнять вопросы при неполной информации
+• Отвечайте номером варианта (1, 2, 3) на уточняющие вопросы
+• Используйте кнопки меню для точного выбора
 
-<b>📊 Статистика вашего диалога</b> доступна по команде /stats
-
-<b>🔧 Техническая поддержка:</b> @ваш_логин_поддержки"""
+<b>📊 Статистика вашего диалога</b> доступна по команде /stats"""
         
         return self.telegram.send_message(chat_id, help_text)
     
@@ -305,13 +309,46 @@ class BotProcessor:
 • <b>Всего сообщений:</b> {session['message_count']}
 • <b>Последняя активность:</b> {session.get('last_activity', 'неизвестно')}
 • <b>Текущее меню:</b> {session.get('current_menu', 'главное')}
+• <b>Ожидание уточнения:</b> {'Да' if session.get('waiting_for_clarification') else 'Нет'}
 
 <b>База знаний бота:</b>
-• Загружено записей: {len(self.kb_searcher.kb_data)}
-• Разделы: Накладные, Отчеты, Платежи, Документы
-• Темы: Финансы, Контрагенты, Настройки"""
+• Загружено записей: {len(self.nlp_engine.kb_searcher.kb_data)}
+• Используется NLP-движок с контекстным анализом"""
         
         return self.telegram.send_message(chat_id, stats_text)
+    
+    def _handle_option_selection(self, chat_id: int, option_number: int) -> bool:
+        """Обработка выбора номера варианта из уточнения"""
+        session = self._get_user_session(chat_id)
+        options = session.get('clarification_options', {})
+        
+        if option_number in options:
+            selected = options[option_number]
+            item = selected['item']
+            
+            # Получаем ответ из выбранного варианта
+            answer = item.get('answer', '')
+            source = item.get('source', '')
+            
+            # Форматируем ответ в зависимости от типа
+            if source in ['button', 'menu']:
+                button_text = item.get('metadata', {}).get('button_text', '')
+                response = f"🔘 **{button_text}**\n\n{answer}"
+            else:
+                response = answer
+            
+            # Сбрасываем состояние уточнения
+            session['waiting_for_clarification'] = False
+            session['clarification_options'] = {}
+            
+            return self.telegram.send_message(chat_id, response, parse_mode="HTML")
+        else:
+            # Неверный номер
+            return self.telegram.send_message(
+                chat_id,
+                f"❌ <b>Неверный номер варианта:</b> {option_number}\n\n"
+                f"Пожалуйста, выберите номер из предложенного списка (1-{len(options)})."
+            )
     
     def handle_command(self, chat_id: int, command: str, args: str = "") -> bool:
         """Обработка команд"""
@@ -321,14 +358,12 @@ class BotProcessor:
             '/stats': self._handle_stats,
         }
         
-        # Убираем username бота если есть
         clean_command = command.split('@')[0]
         handler = commands.get(clean_command)
         
         if handler:
             return handler(chat_id, args)
         
-        # Неизвестная команда
         return self.telegram.send_message(
             chat_id,
             f"🤔 <b>Неизвестная команда:</b> {command}\n\nИспользуйте /help для просмотра доступных команд."
@@ -336,14 +371,16 @@ class BotProcessor:
     
     def handle_button_click(self, chat_id: int, button_text: str) -> bool:
         """Обработка нажатия кнопок меню"""
-        # Обновляем сессию
         session = self._update_user_session(chat_id)
         
-        # Определяем, какая клавиатура нужна
+        # Сбрасываем состояние уточнения при нажатии кнопки
+        session['waiting_for_clarification'] = False
+        session['clarification_options'] = {}
+        
         button_lower = button_text.lower()
         
+        # Обработка навигационных кнопок
         if button_lower == "⬅️ назад":
-            # Возвращаемся в главное меню
             session['current_menu'] = 'main'
             keyboard = self.formatter.create_main_keyboard()
             return self.telegram.send_message(
@@ -361,6 +398,7 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
+        # Обработка разделов меню
         elif "накладные" in button_lower or button_text == "📦 накладные":
             session['current_menu'] = 'invoices'
             keyboard = self.formatter.create_invoices_keyboard()
@@ -389,7 +427,6 @@ class BotProcessor:
             )
         
         elif button_text == "📋 документы":
-            # Показываем меню документов
             session['current_menu'] = 'documents'
             keyboard = {
                 "keyboard": [
@@ -405,27 +442,51 @@ class BotProcessor:
                 reply_markup=keyboard
             )
         
-        # Для остальных кнопок ищем ответ в базе знаний
+        # Для остальных кнопок используем NLP-движок
         return self.handle_message(chat_id, button_text)
     
     def handle_message(self, chat_id: int, user_message: str) -> bool:
-        """Обработка обычного сообщения"""
+        """Обработка обычного сообщения с использованием NLP-движка"""
         # Показываем индикатор "печатает"
         self.telegram.send_chat_action(chat_id, "typing")
         
         # Обновляем сессию
-        self._update_user_session(chat_id, user_message)
+        session = self._update_user_session(chat_id, user_message)
         
-        # Ищем ответ
-        answer = self.kb_searcher.search_answer(user_message)
+        # Проверяем, ожидаем ли мы уточнения от пользователя
+        if session.get('waiting_for_clarification'):
+            # Проверяем, является ли сообщение числом (выбор варианта)
+            if user_message.isdigit():
+                option_number = int(user_message)
+                return self._handle_option_selection(chat_id, option_number)
+            else:
+                # Пользователь не выбрал номер, сбрасываем состояние
+                session['waiting_for_clarification'] = False
+                session['clarification_options'] = {}
         
-        # Отправляем ответ
-        return self.telegram.send_message(chat_id, answer)
+        # Обрабатываем запрос через NLP-движок
+        analysis = self.nlp_engine.process_message(user_message)
+        
+        # Если нашли ответ с низкой уверенностью, предлагаем уточнить
+        if analysis['has_kb_answer'] and analysis['kb_confidence'] < 0.65:
+            # Получаем уточняющий ответ с вариантами
+            clarification_response = self.nlp_engine.get_clarification_response(analysis)
+            
+            # Если у движка есть текущие опции, сохраняем их в сессии
+            if hasattr(self.nlp_engine, '_current_options') and self.nlp_engine._current_options:
+                session['waiting_for_clarification'] = True
+                session['clarification_options'] = self.nlp_engine._current_options.copy()
+                session['original_query'] = user_message
+            
+            return self.telegram.send_message(chat_id, clarification_response, parse_mode="HTML")
+        
+        # Если уверенность высокая или ответ не найден, используем стандартную логику
+        final_answer = self.nlp_engine.get_final_answer(user_message)
+        return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
         """Обработка входящего обновления от Telegram"""
         try:
-            # Обработка сообщений
             if 'message' not in update_data:
                 return False
             
@@ -438,7 +499,7 @@ class BotProcessor:
             
             print(f"📨 Сообщение от {chat_id}: {text}")
             
-            # Определяем, команда это или обычное сообщение
+            # Определяем тип сообщения
             if text.startswith('/'):
                 return self.handle_command(chat_id, text)
             else:
@@ -447,10 +508,10 @@ class BotProcessor:
                     "📦", "📊", "💰", "📋", "📈", "👥", "⚙️", "🆘",
                     "Накладные", "Отчеты", "Платежи", "Документы",
                     "Финансы", "Контрагенты", "Настройки", "Помощь",
-                    "⬅️", "🏠"
+                    "⬅️", "🏠", "накладные", "отчеты", "платежи", "документы"
                 ]
                 
-                if any(btn in text for btn in button_texts):
+                if any(btn in text.lower() for btn in [b.lower() for b in button_texts]):
                     return self.handle_button_click(chat_id, text)
                 else:
                     return self.handle_message(chat_id, text)
@@ -460,4 +521,4 @@ class BotProcessor:
             return False
 
 # Создаем глобальный экземпляр процессора
-bot_processor = BotProcessor()     
+bot_processor = BotProcessor() 
