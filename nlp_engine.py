@@ -36,17 +36,45 @@ class FuzzySearcher:
     
     @staticmethod
     def fuzzy_ratio(text1: str, text2: str) -> float:
-        """Расчет схожести текстов с учетом опечаток"""
+        """Улучшенный расчет схожести текстов"""
+        # Приводим к нижнему регистру
+        text1 = text1.lower()
+        text2 = text2.lower()
+        
+        # 1. Базовое сравнение
         base_ratio = difflib.SequenceMatcher(None, text1, text2).ratio()
+        
+        # 2. Разбиваем на слова
         words1 = text1.split()
         words2 = text2.split()
-        word_overlap = len(set(words1) & set(words2)) / max(len(set(words1)), 1)
+        
+        # 3. Находим общие слова (даже частичные совпадения)
+        common_score = 0
+        for w1 in words1:
+            for w2 in words2:
+                # Проверяем частичное совпадение
+                if w1 in w2 or w2 in w1:
+                    common_score += 1
+                # Проверяем похожие слова (расстояние Левенштейна)
+                elif len(w1) > 3 and len(w2) > 3:
+                    similarity = difflib.SequenceMatcher(None, w1, w2).ratio()
+                    if similarity > 0.6:
+                        common_score += similarity
+        
+        word_overlap = common_score / max(len(words1), len(words2), 1)
+        
+        # 4. Первые буквы слов
         first_letter_score = 0
         if words1 and words2:
-            if words1[0][0] == words2[0][0]:
-                first_letter_score = 0.2
-        fuzzy_score = (base_ratio * 0.6) + (word_overlap * 0.3) + (first_letter_score * 0.1)
-        return fuzzy_score
+            first_match = 0
+            for i in range(min(len(words1), len(words2))):
+                if words1[i][0] == words2[i][0]:
+                    first_match += 1
+            first_letter_score = first_match / max(len(words1), len(words2))
+        
+        # 5. Финальный score
+        fuzzy_score = (base_ratio * 0.4) + (word_overlap * 0.4) + (first_letter_score * 0.2)
+        return min(fuzzy_score, 1.0)
 
 class KnowledgeBaseSearcher:
     """Поиск в локальной базе знаний с учетом опечаток"""
@@ -57,43 +85,34 @@ class KnowledgeBaseSearcher:
         self.preprocessor = TextPreprocessor()
         self.fuzzy_searcher = FuzzySearcher()
         self.question_index = self._build_index()
+        # Создадим индекс для похожих слов
+        self.synonym_index = self._build_synonym_index()
     
-    def _load_knowledge_base(self) -> List[Dict]:
-        try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                print(f"✅ База знаний загружена: {len(data)} записей")
-                return data
-        except FileNotFoundError:
-            print(f"⚠️ Файл {self.file_path} не найден")
-            return []
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Ошибка чтения JSON: {e}")
-            return []
-        except Exception as e:
-            print(f"⚠️ Ошибка загрузки базы знаний: {e}")
-            return []
+    def _build_synonym_index(self) -> Dict[str, List[str]]:
+        """Создание индекса синонимов и похожих слов"""
+        synonyms = {
+            'создание': ['создать', 'создай', 'создавать', 'создаю', 'создал'],
+            'новая': ['новый', 'новое', 'новые', 'новую', 'новой'],
+            'накладная': ['накладной', 'накладные', 'накладных', 'накладную', 'накладным'],
+            'отчет': ['отчета', 'отчеты', 'отчетов', 'отчетом', 'отчетам'],
+            'платеж': ['платежа', 'платежи', 'платежей', 'платежом', 'платежам'],
+            'документ': ['документа', 'документы', 'документов', 'документом', 'документам'],
+        }
+        return synonyms
     
-    def _build_index(self) -> Dict[str, List[Dict]]:
-        index = {}
-        for item in self.kb_data:
-            question = item.get('question', '')
-            normalized = self.preprocessor.normalize_text(question)
-            keywords = self.preprocessor.extract_keywords(normalized)
-            for keyword in keywords:
-                if keyword not in index:
-                    index[keyword] = []
-                index[keyword].append(item)
-        return index
-    
-    def _calculate_similarity(self, text1: str, text2: str) -> float:
-        return self.fuzzy_searcher.fuzzy_ratio(text1, text2)
+    def _expand_keywords(self, keywords: List[str]) -> List[str]:
+        """Расширение ключевых слова синонимами"""
+        expanded = set(keywords)
+        for keyword in keywords:
+            if keyword in self.synonym_index:
+                expanded.update(self.synonym_index[keyword])
+        return list(expanded)
     
     def find_best_match(
         self, 
         user_question: str, 
         source_type: Optional[str] = None,
-        threshold: float = 0.4
+        threshold: float = 0.25  # СНИЖЕННЫЙ ПОРОГ
     ) -> Tuple[Optional[Dict], float]:
         if not self.kb_data:
             return None, 0.0
@@ -101,30 +120,30 @@ class KnowledgeBaseSearcher:
         normalized_question = self.preprocessor.normalize_text(user_question)
         keywords = self.preprocessor.extract_keywords(normalized_question)
         
+        # Расширяем ключевые слова синонимами
+        expanded_keywords = self._expand_keywords(keywords)
+        
         best_item = None
         best_confidence = 0.0
         
-        # Используем множество для хранения ID уже добавленных элементов
-        seen_ids = set()
+        # Собираем кандидатов
         candidate_items = []
+        seen_ids = set()
         
-        for keyword in keywords:
+        # Ищем по всем ключевым словам и их синонимам
+        for keyword in expanded_keywords:
             if keyword in self.question_index:
                 for item in self.question_index[keyword]:
                     item_id = item.get('id')
-                    if item_id is None:
-                        # Если у элемента нет ID, используем текст вопроса как ключ
-                        item_key = item.get('question', '')
-                    else:
-                        item_key = item_id
-                    
-                    if item_key not in seen_ids:
-                        seen_ids.add(item_key)
+                    if item_id not in seen_ids:
+                        seen_ids.add(item_id)
                         candidate_items.append(item)
         
+        # Если не нашли по ключевым словам, ищем во всей базе
         if not candidate_items:
             candidate_items = self.kb_data
         
+        # Проверяем каждого кандидата
         for item in candidate_items:
             item_question = item.get('question', '')
             item_source = item.get('source', 'manual')
@@ -133,17 +152,28 @@ class KnowledgeBaseSearcher:
                 continue
             
             normalized_item = self.preprocessor.normalize_text(item_question)
+            
+            # Улучшенное сравнение
             similarity = self._calculate_similarity(normalized_question, normalized_item)
+            
+            # Проверяем частичные совпадения
+            partial_match_score = 0
+            for kw in keywords:
+                if kw in normalized_item:
+                    partial_match_score += 0.2
             
             item_keywords = self.preprocessor.extract_keywords(normalized_item)
             common_keywords = set(keywords) & set(item_keywords)
             keyword_overlap = len(common_keywords) / max(len(keywords), 1)
             
-            confidence = (similarity * 0.6) + (keyword_overlap * 0.4)
+            # Новая формула с учетом частичных совпадений
+            confidence = (similarity * 0.4) + (keyword_overlap * 0.3) + (partial_match_score * 0.3)
             
             if confidence > best_confidence:
                 best_confidence = confidence
                 best_item = item
+        
+        print(f"🔍 Поиск: '{user_question}' -> лучшая уверенность: {best_confidence:.2f}")
         
         if best_confidence >= threshold:
             return best_item, best_confidence
@@ -274,60 +304,6 @@ class NLPEngine:
         print("✅ NLPEngine инициализирован")
         print(f"📊 Загружено {len(self.kb_searcher.kb_data)} записей из базы знаний")
     
-    def process_message(self, user_message: str) -> Dict[str, Any]:
-        print(f"\n📨 Получено сообщение: '{user_message}'")
-        
-        is_button_click, source_type, button_text = self.intent_classifier.is_button_click(user_message)
-        
-        if is_button_click and source_type and button_text:
-            print(f"🎯 Определено как нажатие кнопки: {source_type} -> '{button_text}'")
-            
-            kb_item = self.button_handler.handle_button_click(source_type, button_text)
-            
-            if kb_item:
-                return {
-                    'original_message': user_message,
-                    'normalized_message': button_text,
-                    'intents': ['button_click'],
-                    'source_type': source_type,
-                    'kb_answer': kb_item.get('answer'),
-                    'kb_item': kb_item,
-                    'kb_confidence': 1.0,
-                    'has_kb_answer': True,
-                    'is_button_click': True,
-                    'is_fuzzy_match': False
-                }
-        
-        normalized = self.preprocessor.normalize_text(user_message)
-        intents = self.intent_classifier.classify(normalized)
-        keywords = self.preprocessor.extract_keywords(normalized)
-        
-        kb_item, kb_confidence = self.kb_searcher.find_best_match(
-            user_message, 
-            threshold=0.35
-        )
-        
-        is_fuzzy_match = False
-        if kb_item and kb_confidence < 0.7:
-            original_question = kb_item.get('question', '')
-            if original_question.lower() != normalized:
-                is_fuzzy_match = True
-        
-        result = {
-            'original_message': user_message,
-            'normalized_message': normalized,
-            'intents': intents,
-            'keywords': keywords,
-            'kb_answer': kb_item.get('answer') if kb_item else None,
-            'kb_item': kb_item,
-            'kb_confidence': kb_confidence,
-            'has_kb_answer': kb_item is not None,
-            'is_button_click': False,
-            'is_fuzzy_match': is_fuzzy_match
-        }
-        
-        return result
-    
     def get_final_answer(self, user_message: str) -> str:
         print(f"🔍 get_final_answer вызван с: '{user_message}'")
         try:
@@ -338,8 +314,9 @@ class NLPEngine:
                 answer = kb_item.get('answer', '')
                 confidence = analysis['kb_confidence']
                 
-                # Если уверенность низкая (< 65%), предлагаем уточнить
-                if confidence < 0.65:
+                # СНИЖЕННЫЙ ПОРОГ для уточнения
+                if confidence < 0.4:  # было 0.65
+                    print(f"🔄 Низкая уверенность ({confidence:.2f}), предлагаем уточнение")
                     clarification_response = self.get_clarification_response(analysis)
                     return clarification_response
                 
@@ -361,6 +338,11 @@ class NLPEngine:
                 else:
                     return f"✅ {answer}\n\n<i>(Найдено в базе знаний с уверенностью {confidence_percent}%)</i>"
             
+            # Если ответ не найден, ищем похожие вопросы
+            similar_questions = self._find_similar_questions(user_message)
+            if similar_questions:
+                return self._create_similar_questions_response(user_message, similar_questions)
+            
             suggestions = self._get_search_suggestions(user_message)
             return f"🤔 <b>К сожалению, я не смог найти ответ на ваш вопрос.</b>\n\n{suggestions}"
             
@@ -370,155 +352,68 @@ class NLPEngine:
             traceback.print_exc()
             return f"❌ <b>Произошла ошибка при обработке запроса:</b>\n\n{str(e)[:200]}"
     
-    def get_clarification_response(self, analysis: Dict) -> str:
-        kb_item = analysis.get('kb_item')
-        if not kb_item:
-            return "Извините, произошла ошибка при обработке вашего запроса."
-        
-        original_q = kb_item.get('question', '')
-        item_tags = kb_item.get('tags', [])
-        item_id = kb_item.get('id')
-        
-        # Ищем вопросы в тех же категориях
-        category_questions = self._get_questions_by_categories(
-            item_tags, 
-            exclude_id=item_id,
-            min_relevance=0.2
-        )
-        
-        # Формируем интерактивное сообщение
-        return self._create_interactive_clarification(
-            original_q,
-            category_questions,
-            "Неизвестный запрос",
-            user_query=analysis.get('original_message', '')
-        )
-    
-    def _get_questions_by_categories(
-        self, 
-        categories: List[str], 
-        exclude_id: Optional[int] = None,
-        limit: int = 4,
-        min_relevance: float = 0.1
-    ) -> List[Dict]:
-        if not categories:
-            return []
-        
-        categorized_items = []
+    def _find_similar_questions(self, user_message: str, limit: int = 5) -> List[Dict]:
+        """Находит похожие вопросы даже с низкой уверенностью"""
+        similar = []
+        normalized_query = self.preprocessor.normalize_text(user_message)
         
         for item in self.kb_searcher.kb_data:
-            if exclude_id and item.get('id') == exclude_id:
-                continue
-                
-            item_tags = item.get('tags', [])
-            common_tags = set(categories) & set(item_tags)
-            
-            if common_tags:
-                relevance_score = len(common_tags) / len(categories)
-                
-                if relevance_score >= min_relevance:
-                    categorized_items.append({
-                        'item': item,
-                        'relevance': relevance_score,
-                        'question': item.get('question', ''),
-                        'tags': item_tags
-                    })
-        
-        categorized_items.sort(key=lambda x: x['relevance'], reverse=True)
-        return categorized_items[:limit]
-    
-    def _create_interactive_clarification(
-        self, 
-        original_question: str,
-        alternative_questions: List[Dict],
-        intent_description: str,
-        user_query: str = ""
-    ) -> str:
-        if not alternative_questions:
-            return (
-                "🤔 **Мне нужно уточнение.**\n\n"
-                f"По вашему запросу **«{user_query[:50]}...»** я нашел:\n"
-                f"**«{original_question}»**\n\n"
-                "*Если это не то, что вам нужно, попробуйте:*\n"
-                "• Использовать другие ключевые слова\n"
-                "• Обратиться к разделам меню\n"
-                "• Сформулировать вопрос более конкретно"
-            )
-        
-        alternatives_text = []
-        option_counter = 1
-        option_map = {}
-        
-        for alt in alternative_questions[:3]:
-            question = alt['question']
-            tags_preview = ", ".join(alt.get('tags', [])[:2]) if alt.get('tags') else ""
-            
-            option_map[option_counter] = alt
-            if tags_preview:
-                alternatives_text.append(f"{option_counter}. 🔹 **{question}** *({tags_preview})*")
-            else:
-                alternatives_text.append(f"{option_counter}. 🔹 **{question}**")
-            option_counter += 1
-        
-        self._current_options = option_map
-        
-        message = (
-            f"🔍 **Нужно уточнение**\n\n"
-            f"По вашему запросу я нашел несколько вариантов:\n\n"
-            f"{chr(10).join(alternatives_text)}\n\n"
-            f"**Какой вариант вам нужен?**\n"
-            f"• Ответьте номером (1-{option_counter-1}) для быстрого выбора\n"
-            f"• Или переформулируйте запрос более конкретно\n"
-            f"• Используйте кнопки меню для точного выбора\n\n"
-            f"*Текущий запрос: «{user_query}»*"
-        )
-        
-        return message
-    
-    def _get_search_suggestions(self, query: str) -> str:
-        normalized = self.preprocessor.normalize_text(query)
-        keywords = self.preprocessor.extract_keywords(normalized)
-        
-        similar_questions = []
-        
-        for item in self.kb_searcher.kb_data[:10]:
             item_question = self.preprocessor.normalize_text(item.get('question', ''))
-            item_keywords = self.preprocessor.extract_keywords(item_question)
-            common = set(keywords) & set(item_keywords)
+            similarity = self.kb_searcher._calculate_similarity(normalized_query, item_question)
             
-            if len(common) >= 1 and item_question not in similar_questions:
-                similar_questions.append(item_question)
-            
-            if len(similar_questions) >= 3:
-                break
+            if similarity > 0.2:  # Низкий порог для похожих вопросов
+                similar.append({
+                    'item': item,
+                    'similarity': similarity,
+                    'question': item.get('question', '')
+                })
         
-        suggestions = "Попробуйте:\n"
-        suggestions += "1. Использовать кнопки меню\n"
-        suggestions += "2. Переформулировать вопрос\n"
+        # Сортируем по убыванию схожести
+        similar.sort(key=lambda x: x['similarity'], reverse=True)
+        return similar[:limit]
+    
+    def _create_similar_questions_response(self, user_query: str, similar_questions: List[Dict]) -> str:
+        """Создает ответ с похожими вопросами"""
+        if not similar_questions:
+            return ""
         
-        if similar_questions:
-            suggestions += "3. Возможно, вам нужен один из этих разделов:\n"
-            for i, q in enumerate(similar_questions, 1):
-                suggestions += f"   • {q}\n"
+        response = f"🔍 <b>По вашему запросу не найден точный ответ.</b>\n\n"
+        response += f"<i>Возможно, вам подойдет один из этих вариантов:</i>\n\n"
         
-        suggestions += "4. Обратиться к администратору"
+        for i, sim in enumerate(similar_questions[:3], 1):
+            question = sim['question']
+            similarity = int(sim['similarity'] * 100)
+            response += f"{i}. <b>{question}</b> (сходство: {similarity}%)\n"
         
-        return suggestions
+        response += f"\n<b>Выберите номер варианта (1-{min(3, len(similar_questions))})</b>"
+        
+        # Сохраняем варианты для обработки выбора
+        self._current_options = {
+            i: sim['item'] for i, sim in enumerate(similar_questions[:3], 1)
+        }
+        
+        return response
     
     def get_option_selection(self, option_number: int) -> Optional[str]:
-        """Обработка выбора опции пользователем"""
-        if option_number in self._current_options:
-            selected = self._current_options[option_number]
-            item = selected['item']
-            answer = item.get('answer', '')
-            source = item.get('source', '')
-            
-            if source in ['button', 'menu']:
-                button_text = item.get('metadata', {}).get('button_text', '')
-                return f"🔘 **{button_text}**\n\n{answer}"
-            else:
-                return answer
+        """Исправленная обработка выбора опции"""
+        print(f"🔍 Выбор опции {option_number}, доступные опции: {list(self._current_options.keys())}")
         
-        return None   
+        if option_number in self._current_options:
+            item = self._current_options[option_number]
+            if isinstance(item, dict):
+                answer = item.get('answer', '')
+                source = item.get('source', '')
+                
+                if source in ['button', 'menu']:
+                    button_text = item.get('metadata', {}).get('button_text', '')
+                    return f"🔘 **{button_text}**\n\n{answer}"
+                else:
+                    return answer
+            else:
+                print(f"⚠️ Неверный формат элемента: {type(item)}")
+                return None
+        
+        print(f"⚠️ Опция {option_number} не найдена")
+        return None
 # Создаем глобальный экземпляр NLP-движка
 nlp_engine = NLPEngine()
