@@ -104,10 +104,23 @@ class KnowledgeBaseSearcher:
         best_item = None
         best_confidence = 0.0
         
-        candidate_items = set()
+        # Используем множество для хранения ID уже добавленных элементов
+        seen_ids = set()
+        candidate_items = []
+        
         for keyword in keywords:
             if keyword in self.question_index:
-                candidate_items.update(self.question_index[keyword])
+                for item in self.question_index[keyword]:
+                    item_id = item.get('id')
+                    if item_id is None:
+                        # Если у элемента нет ID, используем текст вопроса как ключ
+                        item_key = item.get('question', '')
+                    else:
+                        item_key = item_id
+                    
+                    if item_key not in seen_ids:
+                        seen_ids.add(item_key)
+                        candidate_items.append(item)
         
         if not candidate_items:
             candidate_items = self.kb_data
