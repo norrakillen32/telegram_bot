@@ -299,6 +299,21 @@ class BotProcessor:
             # Обработка кнопки "Помощь" как команды
             return self._handle_help(chat_id, "")
         
+        elif button_text == "📋 Счета" or "счета" in button_lower:
+            return self.handle_message(chat_id, "📋 Счета")
+        
+        elif button_text == "📑 Акта" or "акт" in button_lower:
+            return self.handle_message(chat_id, "📑 Акта")
+        
+        elif button_text == "📝 Договоры" or "договоры" in button_lower:
+            return self.handle_message(chat_id, "📝 Договоры")
+        
+        elif button_text == "🏢 Организации" or "организации" in button_lower:
+            return self.handle_message(chat_id, "🏢 Организации")
+        
+        elif button_text == "⚙️ Настройки" or "настройки" in button_lower:
+            return self.handle_message(chat_id, "⚙️ Настройки")
+        
         # Для остальных кнопок используем NLPEngine
         return self.handle_message(chat_id, button_text)
     
