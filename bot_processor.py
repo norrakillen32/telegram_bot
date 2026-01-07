@@ -177,20 +177,44 @@ class BotProcessor:
         return self._handle_unknown_command(chat_id, command)
     
     def _handle_start(self, chat_id: int, args: str) -> bool:
-        """Обработка команды /start"""
-        # Приветственная клавиатура
-        keyboard = self.formatter.create_keyboard_markup([
-            "📦 Накладные",
-            "📊 Отчеты",
-            "💰 Платежи",
-            "🆘 Помощь"
-        ])
-        
-        return self.telegram.send_message(
-            chat_id,
-            self.formatter.format_welcome_message(),
-            reply_markup=keyboard
-        )
+    """Обработка команды /start с улучшенной клавиатурой"""
+    # Главная клавиатура
+    main_keyboard = {
+        "keyboard": [
+            [{"text": "📦 Накладные"}, {"text": "📊 Отчеты"}],
+            [{"text": "💰 Платежи"}, {"text": "📋 Документы"}],
+            [{"text": "📈 Финансы"}, {"text": "👥 Контрагенты"}],
+            [{"text": "⚙️ Настройки"}, {"text": "🆘 Помощь"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Выберите раздел или задайте вопрос..."
+    }
+    
+    # Инлайн-кнопки для быстрых действий
+    inline_keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "📦 Создать накладную", "callback_data": "create_invoice"},
+                {"text": "💰 Оплата", "callback_data": "create_payment"}
+            ],
+            [
+                {"text": "📊 Отчет", "callback_data": "open_report"},
+                {"text": "👤 По клиенту", "callback_data": "by_client"}
+            ],
+            [
+                {"text": "📚 База знаний", "callback_data": "open_knowledge"},
+                {"text": "📞 Поддержка", "url": "https://t.me/ваш_канал_поддержки"}
+            ]
+        ]
+    }
+    
+    # Отправляем сообщение с инлайн-кнопками
+    return self.telegram.send_message(
+        chat_id,
+        self.formatter.format_welcome_message(),
+        reply_markup=inline_keyboard
+    )
     
     def _handle_help(self, chat_id: int, args: str) -> bool:
         """Обработка команды /help"""
@@ -213,7 +237,84 @@ class BotProcessor:
             chat_id,
             self.formatter.format_knowledge_topics(kb_data)
         )
+        
+    def handle_button_click(self, chat_id: int, button_text: str) -> bool:
+        """Обработка нажатия кнопок главного меню"""
+        button_responses = {
+            "📦 накладные": self._show_invoices_menu,
+            "📊 отчеты": self._show_reports_menu,
+            "💰 платежи": self._show_payments_menu,
+            "📋 документы": self._show_documents_menu,
+            "📈 финансы": self._show_finance_menu,
+            "👥 контрагенты": self._show_contractors_menu,
+            "⚙️ настройки": self._show_settings_menu,
+            "🆘 помощь": self._show_help_menu
+        }
+        
+        button_lower = button_text.lower()
+        for btn_key, handler in button_responses.items():
+            if btn_key in button_lower:
+                return handler(chat_id)
+        
+        return self.telegram.send_message(chat_id, "Раздел в разработке...")
     
+    def handle_callback_query(self, chat_id: int, callback_data: str) -> bool:
+        """Обработка инлайн-кнопок"""
+        callback_handlers = {
+            "create_invoice": lambda: self._handle_create_invoice(chat_id),
+            "create_payment": lambda: self._handle_create_payment(chat_id),
+            "open_report": lambda: self._handle_open_report(chat_id),
+            "by_client": lambda: self._handle_by_client(chat_id),
+            "open_knowledge": lambda: self._handle_open_knowledge(chat_id)
+        }
+        
+        handler = callback_handlers.get(callback_data)
+        if handler:
+            return handler()
+        
+        return self.telegram.send_message(chat_id, "Действие не найдено")
+    
+    def _show_invoices_menu(self, chat_id: int) -> bool:
+        """Показать меню накладных"""
+        invoices_menu = {
+            "keyboard": [
+                [{"text": "📦 Новая накладная"}, {"text": "📋 Копировать накладную"}],
+                [{"text": "🔄 Создать УПД"}, {"text": "🚚 ТТН для перевозки"}],
+                [{"text": "🔍 Поиск накладной"}, {"text": "📊 Статистика накладных"}],
+                [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
+            ],
+            "resize_keyboard": True
+        }
+        
+        return self.telegram.send_message(
+            chat_id,
+            "📦 <b>Раздел «Накладные»</b>\n\nВыберите действие или задайте вопрос:",
+            reply_markup=invoices_menu
+        )
+    
+    def _show_reports_menu(self, chat_id: int) -> bool:
+        """Показать меню отчетов"""
+        reports_menu = {
+            "keyboard": [
+                [{"text": "📈 Прибыль и убытки"}, {"text": "💰 Денежный поток"}],
+                [{"text": "📦 Остатки товаров"}, {"text": "👥 Дебиторская задолженность"}],
+                [{"text": "📊 Продажи по периодам"}, {"text": "📋 Товарооборот"}],
+                [{"text": "⬅️ Назад"}, {"text": "🏠 В главное меню"}]
+            ],
+            "resize_keyboard": True
+        }
+        
+        return self.telegram.send_message(
+            chat_id,
+            "📊 <b>Раздел «Отчеты»</b>\n\nВыберите тип отчета:",
+            reply_markup=reports_menu
+        )
+    
+    def _handle_create_invoice(self, chat_id: int) -> bool:
+        """Обработка создания накладной"""
+        # Используем поиск в базе знаний
+        answer = self.kb_searcher.search_answer("как создать накладную")
+        return self.telegram.send_message(chat_id, answer)
     def _handle_stats(self, chat_id: int, args: str) -> bool:
         """Обработка команды /stats"""
         session = self._get_user_session(chat_id)
@@ -269,30 +370,43 @@ class BotProcessor:
         return self.telegram.send_message(chat_id, final_answer)
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
-        """Обработка входящего обновления от Telegram"""
-        try:
-            # Извлекаем данные из обновления
-            if 'message' not in update_data:
-                return False
-            
-            message = update_data['message']
-            chat_id = message['chat']['id']
-            text = message.get('text', '').strip()
-            
-            if not text:
-                return False
-            
-            print(f"Обработка: chat_id={chat_id}, text='{text}'")
-            
-            # Определяем, команда это или обычное сообщение
-            if text.startswith('/'):
-                return self.handle_command(chat_id, text)
-            else:
-                return self.handle_message(chat_id, text)
-            
-        except Exception as e:
-            print(f"Ошибка в process_update: {e}")
+    """Обработка входящего обновления"""
+    try:
+        # Обработка callback_query (инлайн-кнопки)
+        if 'callback_query' in update_data:
+            callback = update_data['callback_query']
+            chat_id = callback['message']['chat']['id']
+            callback_data = callback.get('data', '')
+            return self.handle_callback_query(chat_id, callback_data)
+        
+        # Обработка обычного сообщения
+        if 'message' not in update_data:
             return False
+        
+        message = update_data['message']
+        chat_id = message['chat']['id']
+        text = message.get('text', '').strip()
+        
+        if not text:
+            return False
+        
+        print(f"📨 Сообщение от {chat_id}: {text[:50]}...")
+        
+        # Проверяем, не кнопка ли это
+        if self._is_button_click(text):
+            return self.handle_button_click(chat_id, text)
+        
+        # Если команда
+        if text.startswith('/'):
+            return self.handle_command(chat_id, text)
+        
+        # Обычный вопрос - ищем в базе знаний
+        answer = self.kb_searcher.search_answer(text)
+        return self.telegram.send_message(chat_id, answer)
+        
+    except Exception as e:
+        print(f"❌ Ошибка обработки: {e}")
+        return False
 
 # Создаем глобальный экземпляр процессора
 bot_processor = BotProcessor()      
