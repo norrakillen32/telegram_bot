@@ -322,32 +322,235 @@ class KnowledgeBaseSearcher:
         return None
 
 class IntentClassifier:
-    """Классификатор намерений пользователя"""
+    """Улучшенный классификатор намерений пользователя с контекстным анализом"""
     
     def __init__(self):
-        self.intents = {
-            'greeting': ['привет', 'здравствуй', 'добрый', 'hello', 'hi', 'начать', 'прив'],
-            'farewell': ['пока', 'до свидания', 'выход', 'закончить', 'спасибо', 'пок', 'всего'],
-            'help': ['помощь', 'помоги', 'что ты умеешь', 'команды', 'подскажи', 'посоветуй'],
-            'question_1c': ['как', 'где', 'почему', 'зачем', 'можно ли', 'какой', 'чем'],
-            'document': ['накладная', 'счет', 'акт', 'договор', 'ордер', 'отчет', 'документ'],
-            'operation': ['создать', 'удалить', 'изменить', 'провести', 'отменить', 'сделать', 'написать'],
-            'search': ['найти', 'поиск', 'искать', 'где найти', 'как найти', 'найди'],
-            'button_click': ['button:', 'menu:', 'нажать кнопку', 'клик по', 'кнопка']
+        # Детальные паттерны намерений с весами и контекстом
+        self.intent_patterns = {
+            'payment_to_supplier': {
+                'primary': ['оплат[иь]т?ь?', 'платеж', 'перечисл[еи]т?ь?', 'списан[ие]', 'выплат[и]т?ь?'],
+                'secondary': ['поставщик[уа]?', 'контрагенту', 'поставку', 'за товар[ы]?', 'за услугу'],
+                'negative': ['оприход', 'поступл', 'получ[еи]', 'принят', 'товар[ы]? от'],
+                'weight': 2.0,
+                'threshold': 1.5
+            },
+            'goods_receipt': {
+                'primary': ['оприход[ао]в[а]т?ь?', 'поступл[еи]', 'получ[еи]л?', 'принят[ь]', 'приемк[ау]'],
+                'secondary': ['товар[ы]?', 'материал[ы]?', 'тмц', 'от поставщик', 'купил', 'закупил'],
+                'negative': ['оплат', 'платеж', 'перечисл', 'деньг', 'списан'],
+                'weight': 2.0,
+                'threshold': 1.5
+            },
+            'invoice_creation': {
+                'primary': ['накладн[аую]', 'счет[- ]?фактур[уа]?', 'упд', 'торг[- ]?12'],
+                'secondary': ['созда[ть]', 'выписат[ь]', 'оформит[ь]', 'провести'],
+                'negative': ['оплат', 'получ[еи]л?', 'принял'],
+                'weight': 1.8,
+                'threshold': 1.3
+            },
+            'bank_statement': {
+                'primary': ['выписк[ау]', 'банковск[аую]', 'загруз[и]т?ь?', 'импорт[и]'],
+                'secondary': ['банк[аеу]?', 'счет[ауе]?', 'операци[ий]', 'платеж[еи]'],
+                'negative': ['касс', 'наличн'],
+                'weight': 1.5,
+                'threshold': 1.2
+            },
+            'cash_operations': {
+                'primary': ['касс[ауеы]', 'наличн[ые]', 'пко', 'рко', 'ордер[ау]'],
+                'secondary': ['приходн[ой]', 'расходн[ой]', 'выдат[ь]', 'получ[и]т?ь?'],
+                'negative': ['безнал', 'банк', 'перечисл'],
+                'weight': 1.5,
+                'threshold': 1.2
+            },
+            'report_generation': {
+                'primary': ['отчет[ау]?', 'ведомост[ьи]', 'анализ[ау]?', 'статистик[ау]'],
+                'secondary': ['сформир[оа]в[а]т?ь?', 'посмотр[е]т?ь?', 'получит[ь]', 'построит[ь]'],
+                'negative': ['документ', 'провести', 'создат[ь]'],
+                'weight': 1.3,
+                'threshold': 1.0
+            },
+            'debt_analysis': {
+                'primary': ['задолженност[ьи]', 'дебиторск[аую]', 'кредиторск[аую]', 'долг[иа]'],
+                'secondary': ['посмотр[е]т?ь?', 'проверит[ь]', 'проанализ[и]', 'контрагент'],
+                'negative': ['оплат', 'перечисл', 'провести'],
+                'weight': 1.4,
+                'threshold': 1.1
+            },
+            'advance_report': {
+                'primary': ['авансов[ый]', 'подотчет[н]', 'отчет сотрудник'],
+                'secondary': ['созда[ть]', 'заполни[ть]', 'провести', 'сда[ть]'],
+                'negative': ['выдат[ь]', 'получ[и]т?ь?', 'деньг[и] под'],
+                'weight': 1.4,
+                'threshold': 1.1
+            },
+            'goods_balance': {
+                'primary': ['остатк[иау]', 'налич[ие]', 'склад[аеу]', 'запас[ыа]'],
+                'secondary': ['товар[ы]?', 'посмотр[е]т?ь?', 'проверит[ь]', 'сколько есть'],
+                'negative': ['продаж', 'отгрузк', 'реализац'],
+                'weight': 1.3,
+                'threshold': 1.0
+            },
+            'sales_period': {
+                'primary': ['продаж[и] по', 'динамик[ау]', 'период[ауы]?', 'месяц[ауы]?'],
+                'secondary': ['график', 'тенденц', 'сравнен[ие]'],
+                'negative': ['оприход', 'поступл', 'закупк'],
+                'weight': 1.3,
+                'threshold': 1.0
+            },
+            'greeting': {
+                'primary': ['привет', 'здравствуй', 'добр[ыйое]', 'hello', 'hi', 'здрасте'],
+                'secondary': [],
+                'negative': [],
+                'weight': 3.0,
+                'threshold': 0.5
+            },
+            'farewell': {
+                'primary': ['пока', 'до свидан[ия]', 'выход', 'законч[и]т?ь?', 'спасибо'],
+                'secondary': [],
+                'negative': [],
+                'weight': 3.0,
+                'threshold': 0.5
+            },
+            'help_request': {
+                'primary': ['помощ[ьи]', 'помог[и]', 'подскаж[и]', 'посовету[йи]'],
+                'secondary': ['что ты умееш[ь]', 'команд[ы]', 'инструкц[ия]'],
+                'negative': [],
+                'weight': 2.5,
+                'threshold': 0.8
+            },
+            'button_click': {
+                'primary': ['button:', 'menu:', 'кнопк[ауи]', 'клик[ау]'],
+                'secondary': ['нажат[ь]', 'нажм[и]', 'выбрат[ь]', 'нажы', 'кликн[уть]'],
+                'negative': [],
+                'weight': 2.0,
+                'threshold': 0.7
+            },
+            'unknown': {
+                'primary': [],
+                'secondary': [],
+                'negative': [],
+                'weight': 0.0,
+                'threshold': 0.0
+            }
         }
     
     def classify(self, text: str) -> List[str]:
-        """Определение намерений в тексте"""
+        """Определение намерений в тексте с учетом контекста"""
         text_lower = text.lower()
         detected_intents = []
         
-        for intent, keywords in self.intents.items():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    detected_intents.append(intent)
-                    break
+        # Используем базовый классификатор для совместимости
+        for intent_type in ['greeting', 'farewell', 'help_request', 'button_click']:
+            if intent_type == 'button_click':
+                if 'button:' in text_lower or 'menu:' in text_lower:
+                    detected_intents.append('button_click')
+            else:
+                for pattern in self.intent_patterns[intent_type]['primary']:
+                    if re.search(pattern, text_lower):
+                        detected_intents.append(intent_type)
+                        break
+        
+        # Если не нашли базовых интентов, используем контекстный анализ
+        if not detected_intents:
+            main_intent = self._classify_with_context(text_lower)
+            detected_intents.append(main_intent)
         
         return detected_intents if detected_intents else ['unknown']
+    
+    def _classify_with_context(self, text: str) -> str:
+        """Контекстная классификация с учетом весов и отрицательных слов"""
+        scores = {}
+        
+        for intent_name, patterns in self.intent_patterns.items():
+            if intent_name in ['greeting', 'farewell', 'help_request', 'button_click', 'unknown']:
+                continue
+                
+            score = 0.0
+            
+            # Проверяем первичные паттерны
+            for pattern in patterns['primary']:
+                if re.search(pattern, text):
+                    score += patterns['weight'] * 2.0
+            
+            # Проверяем вторичные паттерны
+            for pattern in patterns['secondary']:
+                if re.search(pattern, text):
+                    score += patterns['weight'] * 1.0
+            
+            # Штрафуем за отрицательные слова
+            for pattern in patterns['negative']:
+                if re.search(pattern, text):
+                    score -= patterns['weight'] * 3.0  # Сильный штраф
+            
+            scores[intent_name] = max(score, 0.0)
+        
+        # Находим интент с максимальным счетом
+        if scores:
+            best_intent = max(scores, key=scores.get)
+            if scores[best_intent] >= self.intent_patterns[best_intent]['threshold']:
+                return best_intent
+        
+        return 'unknown'
+    
+    def classify_with_context(self, text: str) -> Tuple[str, float]:
+        """Расширенная классификация с возвратом уверенности"""
+        text_lower = text.lower()
+        
+        # Сначала проверяем базовые интенты
+        if 'button:' in text_lower or 'menu:' in text_lower:
+            return 'button_click', 1.0
+        
+        # Контекстный анализ
+        scores = {}
+        for intent_name, patterns in self.intent_patterns.items():
+            if intent_name in ['greeting', 'farewell', 'help_request', 'button_click', 'unknown']:
+                continue
+                
+            score = 0.0
+            primary_matches = 0
+            secondary_matches = 0
+            negative_matches = 0
+            
+            # Проверяем первичные паттерны
+            for pattern in patterns['primary']:
+                if re.search(pattern, text_lower):
+                    score += patterns['weight'] * 2.0
+                    primary_matches += 1
+            
+            # Проверяем вторичные паттерны
+            for pattern in patterns['secondary']:
+                if re.search(pattern, text_lower):
+                    score += patterns['weight'] * 1.0
+                    secondary_matches += 1
+            
+            # Штрафуем за отрицательные слова
+            for pattern in patterns['negative']:
+                if re.search(pattern, text_lower):
+                    score -= patterns['weight'] * 3.0
+                    negative_matches += 1
+            
+            # Учитываем соотношение совпадений
+            total_matches = primary_matches + secondary_matches
+            if total_matches > 0:
+                match_ratio = primary_matches / total_matches
+                score *= (0.5 + match_ratio * 0.5)
+            
+            scores[intent_name] = max(score, 0.0)
+        
+        if not scores:
+            return 'unknown', 0.0
+        
+        best_intent = max(scores, key=scores.get)
+        best_score = scores[best_intent]
+        threshold = self.intent_patterns[best_intent]['threshold']
+        
+        # Нормализуем уверенность
+        confidence = min(best_score / (threshold * 2), 1.0) if threshold > 0 else 0.5
+        
+        if best_score >= threshold:
+            return best_intent, confidence
+        
+        return 'unknown', confidence
     
     def is_button_click(self, text: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """Определение, является ли запрос нажатием кнопки"""
@@ -378,6 +581,27 @@ class IntentClassifier:
                         return True, source_type, button_text
         
         return False, None, None
+    
+    def get_intent_description(self, intent_name: str) -> str:
+        """Получение описания интента"""
+        descriptions = {
+            'payment_to_supplier': 'Оплата поставщику',
+            'goods_receipt': 'Оприходование товара от поставщика',
+            'invoice_creation': 'Создание накладной или счета-фактуры',
+            'bank_statement': 'Работа с банковскими выписками',
+            'cash_operations': 'Кассовые операции',
+            'report_generation': 'Формирование отчетов',
+            'debt_analysis': 'Анализ задолженности',
+            'advance_report': 'Авансовые отчеты',
+            'goods_balance': 'Остатки товаров',
+            'sales_period': 'Продажи по периодам',
+            'greeting': 'Приветствие',
+            'farewell': 'Прощание',
+            'help_request': 'Запрос помощи',
+            'button_click': 'Нажатие кнопки',
+            'unknown': 'Неизвестный запрос'
+        }
+        return descriptions.get(intent_name, 'Неизвестный интент')
 
 class ButtonHandler:
     """Обработчик нажатий кнопок с учетом опечаток"""
@@ -431,17 +655,17 @@ class ButtonHandler:
         return None
 
 class NLPEngine:
-    """Основной NLP-движок с учетом опечаток"""
+    """Основной NLP-движок с улучшенной логикой классификации"""
     
     def __init__(self):
         self.preprocessor = TextPreprocessor()
-        self.intent_classifier = IntentClassifier()
+        self.intent_classifier = IntentClassifier()  # Используем новый классификатор
         self.kb_searcher = KnowledgeBaseSearcher()
         self.button_handler = ButtonHandler(self.kb_searcher)
     
     def process_message(self, user_message: str) -> Dict[str, Any]:
         """
-        Полная обработка сообщения пользователя с учетом опечаток
+        Полная обработка сообщения пользователя с улучшенной классификацией
         """
         print(f"\n📨 Получено сообщение: '{user_message}'")
         
@@ -470,11 +694,12 @@ class NLPEngine:
                     'is_fuzzy_match': False
                 }
         
-        # Обычная текстовая обработка с учетом опечаток
+        # Обычная текстовая обработка
         normalized = self.preprocessor.normalize_text(user_message)
         
-        # Классификация намерений
-        intents = self.intent_classifier.classify(normalized)
+        # Используем расширенную классификацию с контекстом
+        main_intent, intent_confidence = self.intent_classifier.classify_with_context(normalized)
+        intent_description = self.intent_classifier.get_intent_description(main_intent)
         
         # Извлечение ключевых слов
         keywords = self.preprocessor.extract_keywords(normalized)
@@ -482,13 +707,12 @@ class NLPEngine:
         # Поиск в базе знаний с учетом опечаток
         kb_item, kb_confidence = self.kb_searcher.find_best_match(
             user_message, 
-            threshold=0.35  # Низкий порог для текстовых запросов
+            threshold=0.35
         )
         
         # Проверяем, был ли это fuzzy match
         is_fuzzy_match = False
         if kb_item and kb_confidence < 0.7:
-            # Если уверенность невысокая, проверяем оригинальный вопрос
             original_question = kb_item.get('question', '')
             if original_question.lower() != normalized:
                 is_fuzzy_match = True
@@ -497,7 +721,9 @@ class NLPEngine:
         result = {
             'original_message': user_message,
             'normalized_message': normalized,
-            'intents': intents,
+            'main_intent': main_intent,
+            'intent_description': intent_description,
+            'intent_confidence': intent_confidence,
             'keywords': keywords,
             'kb_answer': kb_item.get('answer') if kb_item else None,
             'kb_item': kb_item,
@@ -510,12 +736,35 @@ class NLPEngine:
         return result
     
     def get_final_answer(self, user_message: str) -> str:
-        """Получение финального ответа для пользователя"""
+        """Получение финального ответа с уточнениями при низкой уверенности"""
         analysis = self.process_message(user_message)
         
         # Если нашли в базе знаний
         if analysis['has_kb_answer']:
             kb_item = analysis['kb_item']
+            confidence = analysis['kb_confidence']
+            
+            # Если уверенность низкая (< 65%), предлагаем уточнить
+            if confidence < 0.65 and analysis['main_intent'] != 'unknown':
+                intent_desc = analysis['intent_description']
+                original_q = kb_item.get('question', '')
+                
+                # Формируем уточняющий вопрос на основе интента
+                clarification_map = {
+                    'payment_to_supplier': "уточните, вам нужна инструкция по **оплате поставщику** или по **оприходованию полученного от него товара**?",
+                    'goods_receipt': "уточните, вам нужна инструкция по **оприходованию товара от поставщика** или по **оплате ему**?",
+                    'invoice_creation': "уточните, вам нужна инструкция по **созданию накладной** или по **ее оплате/получению**?",
+                    'debt_analysis': "уточните, вас интересует **дебиторская задолженность** (нам должны) или **кредиторская** (мы должны)?"
+                }
+                
+                clarification = clarification_map.get(
+                    analysis['main_intent'], 
+                    "уточните, пожалуйста, ваш вопрос?"
+                )
+                
+                return f"🤔 **Я нашел несколько возможных ответов.**\n\n{clarification}\n\n*Похожий вопрос в базе: «{original_q}»*"
+            
+            # Если уверенность высокая, показываем ответ
             answer = kb_item.get('answer', '')
             
             # Для кнопок добавляем специальное оформление
@@ -528,7 +777,7 @@ class NLPEngine:
                     return header + answer
             
             # Для fuzzy match добавляем пояснение
-            confidence_percent = int(analysis['kb_confidence'] * 100)
+            confidence_percent = int(confidence * 100)
             
             if analysis.get('is_fuzzy_match'):
                 original_question = kb_item.get('question', '')
@@ -545,25 +794,29 @@ class NLPEngine:
         normalized = self.preprocessor.normalize_text(query)
         keywords = self.preprocessor.extract_keywords(normalized)
         
+        # Определяем основной интент для более точных предложений
+        main_intent, _ = self.intent_classifier.classify_with_context(normalized)
+        intent_desc = self.intent_classifier.get_intent_description(main_intent)
+        
         # Ищем похожие вопросы в базе
         similar_questions = []
         
-        for item in self.kb_searcher.kb_data[:10]:  # Проверяем первые 10
+        for item in self.kb_searcher.kb_data[:15]:  # Проверяем первые 15
             item_question = self.preprocessor.normalize_text(item.get('question', ''))
             
-            # Простая проверка совпадения ключевых слов
+            # Проверяем совпадение ключевых слов
             item_keywords = self.preprocessor.extract_keywords(item_question)
             common = set(keywords) & set(item_keywords)
             
             if len(common) >= 1 and item_question not in similar_questions:
-                similar_questions.append(item_question)
+                similar_questions.append(item.get('question', ''))
             
             if len(similar_questions) >= 3:
                 break
         
         suggestions = "Попробуйте:\n"
         suggestions += "1. Использовать кнопки меню\n"
-        suggestions += "2. Переформулировать вопрос\n"
+        suggestions += f"2. Уточнить вопрос по теме: {intent_desc}\n"
         
         if similar_questions:
             suggestions += "3. Возможно, вам нужен один из этих разделов:\n"
