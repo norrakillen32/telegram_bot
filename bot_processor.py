@@ -315,6 +315,12 @@ class BotProcessor:
                 session['waiting_for_clarification'] = False
         
         final_answer = self.nlp_engine.get_final_answer(chat_id, user_message)
+        
+        # Проверяем, является ли ответ уточняющим вопросом
+        if "Выберите номер варианта" in final_answer:
+            session['waiting_for_clarification'] = True
+            print(f"📝 Установлен waiting_for_clarification для пользователя {chat_id}")
+        
         return self.telegram.send_message(chat_id, final_answer, parse_mode="HTML")
     
     def process_update(self, update_data: Dict[str, Any]) -> bool:
